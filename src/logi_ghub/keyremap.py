@@ -39,6 +39,9 @@ SYS_HIDRAW = Path("/sys/class/hidraw")
 
 KEY_ESC, KEY_BACKSPACE, KEY_ENTER = 1, 14, 28
 PANIC = frozenset({KEY_BACKSPACE, KEY_ESC, KEY_ENTER})
+# special:0x0B — "G-Shift while held". On a keyboard it is not a device function
+# but the trigger for the second layer.
+GSHIFT = 0x0B
 
 # Keys of the G915 X's media row, by the names the on-screen keyboard uses.
 MEDIA_KEYS = {"Mute": "Mute", "Play/Pause": "Play/Pause", "Previous": "Previous track", "Next": "Next track"}
@@ -173,10 +176,17 @@ class KeyMapper:
 
     ``keyboard`` and ``pointer`` need ``key(code, down)``; ``pointer`` also
     ``wheel(clicks, horizontal)``. ``runner`` plays macros (daemon.MacroRunner).
+
+    A key assigned ``special:0x0B`` is the G-Shift trigger: while it is held, the
+    second layer answers for every key instead of the first. The trigger itself is
+    swallowed — it does nothing else.
     """
 
-    def __init__(self, mapping: dict[int, Action], keyboard, pointer=None, runner=None, macros=None, tag: str = "keys"):
+    def __init__(self, mapping: dict[int, Action], keyboard, pointer=None, runner=None, macros=None, tag: str = "keys",
+                 gshift_mapping: dict[int, Action] | None = None, on_layer=None):
         self.mapping = mapping
+        self.gshift_mapping = gshift_mapping or {}
+        self.on_layer = on_layer
         self.keyboard = keyboard
         self.pointer = pointer
         self.runner = runner
@@ -186,6 +196,26 @@ class KeyMapper:
         self.passed: set[int] = set()  # keys passed through and still held
         self.held: dict[int, tuple[Action, list[int]]] = {}  # remapped keys still held -> what was pressed
         self.panicked = False
+        self.gshift = False
+        self.trigger: int | None = None  # the key holding the layer open
+
+    def set_layer(self, on: bool) -> None:
+        """Open or close the second layer, telling whoever is listening exactly once."""
+        if on == self.gshift:
+            return
+        self.gshift = on
+        if self.on_layer is not None:
+            self.on_layer(on)
+
+    def action_for(self, code: int) -> Action | None:
+        """What this key does now: the second layer while it is open, else the first.
+
+        A key the second layer does not name keeps its first-layer action, so a
+        partly filled layer changes only what it lists.
+        """
+        if self.gshift and code in self.gshift_mapping:
+            return self.gshift_mapping[code]
+        return self.mapping.get(code)
 
     def handle(self, code: int, value: int) -> None:
         """value: 1 press, 0 release, 2 auto-repeat (ignored: the virtual keyboard repeats by itself)."""
@@ -199,13 +229,23 @@ class KeyMapper:
         else:
             self.physical_down.discard(code)
         if value:
-            action = self.mapping.get(code)
+            action = self.action_for(code)
+            if action is not None and action.kind == "special" and action.function == GSHIFT:
+                # The trigger never types anything, and never appears in the
+                # second layer: it only holds the layer open.
+                self.trigger = code
+                self.set_layer(True)
+                return
             if action is None:
                 self.keyboard.key(code, True)
                 self.passed.add(code)
             else:
                 self.held[code] = (action, self._press(code, action))
         else:
+            if code == self.trigger:
+                self.trigger = None
+                self.set_layer(False)
+                return
             if code in self.held:
                 action, codes = self.held.pop(code)
                 self._release(code, action, codes)
@@ -232,6 +272,9 @@ class KeyMapper:
             return []
         if a.kind == "special":
             f = a.function
+            if f == GSHIFT:
+                # Handled in handle(): it opens the layer and types nothing.
+                return []
             if f in (0x01, 0x02, 0x10, 0x11) and self.pointer is not None:
                 self.pointer.wheel(-1 if f in (0x01, 0x10) else 1, f in (0x01, 0x02))
             else:
@@ -255,6 +298,9 @@ class KeyMapper:
             self.keyboard.key(code, False)
         self.passed.clear()
         self.physical_down.clear()
+        # A layer left open would answer for the next profile's keys.
+        self.trigger = None
+        self.set_layer(False)
 
 
 class KeyRemapper:
@@ -266,10 +312,12 @@ class KeyRemapper:
     """
 
     def __init__(self, name: str, nodes: list[EventNode], mapping: dict[int, Action], pointer=None, runner=None,
-                 macros=None, tag: str = "keys", virtual_factory=None):
+                 macros=None, tag: str = "keys", virtual_factory=None, gshift_mapping=None, on_layer=None):
         self.name = name
         self.nodes = nodes
         self.mapping = mapping
+        self.gshift_mapping = gshift_mapping or {}
+        self.on_layer = on_layer
         self.pointer = pointer
         self.runner = runner
         self.macros = macros or {}
@@ -298,7 +346,9 @@ class KeyRemapper:
                 fd = os.open(node.path, os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC)
                 self.fds[fd] = node
             key_codes = set().union(*(n.keys for n in self.nodes))
-            for a in self.mapping.values():
+            # Every layer's output, so the virtual keyboard can type what a key
+            # becomes while the second layer is open.
+            for a in list(self.mapping.values()) + list(self.gshift_mapping.values()):
                 key_codes.update(action_key_codes(a))
             leds = set().union(*(n.leds for n in self.nodes))
             self.virtual = self.virtual_factory(key_codes, leds)
@@ -308,12 +358,23 @@ class KeyRemapper:
         except OSError:
             self._close()
             raise
-        self.mapper = KeyMapper(self.mapping, self.virtual, self.pointer, self.runner, self.macros, self.tag)
+        self.mapper = KeyMapper(self.mapping, self.virtual, self.pointer, self.runner, self.macros, self.tag,
+                                gshift_mapping=self.gshift_mapping, on_layer=self._layer_changed)
         self._wake_r, self._wake_w = os.pipe()
         self.thread = threading.Thread(target=self._run, name=f"keys-{self.name}", daemon=True)
         self.thread.start()
         log.info("%s: %d key assignment(s) active (%s)", self.name, len(self.mapping),
                  ", ".join(n.path for n in self.nodes))
+
+    def _layer_changed(self, on: bool) -> None:
+        """The G-Shift key was pressed or released: say so, without doing I/O here.
+
+        Called on the reader thread, so it only forwards: whoever wants to react
+        (the daemon, the tray) decides what to do with it.
+        """
+        log.info("%s: G-Shift layer %s", self.name, "open" if on else "closed")
+        if self.on_layer is not None:
+            self.on_layer(on)
 
     def _wait_for_keys_up(self, timeout: float = 3.0) -> None:
         """Grabbing while a key is down would leave the desktop thinking it is still held."""
