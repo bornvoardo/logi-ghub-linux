@@ -348,7 +348,10 @@ class Session:
         if self.spy is None:
             return
         try:
-            self.spy.set_remapping(self._remap_table())
+            table = self._remap_table()
+            log.info("%s: remapping table %s (layer %s, count %s)", self.dev.name, table, self.gshift,
+                     self.spy.count)
+            self.spy.set_remapping(table)
         except (HIDPPError, DeviceOffline, TimeoutError, OSError) as e:
             log.info("%s: could not update the button remapping: %s", self.dev.name, e)
 
