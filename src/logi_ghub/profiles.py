@@ -35,6 +35,10 @@ class Profile:
     macros: list[Macro] = field(default_factory=list)
     lighting: dict = field(default_factory=dict)  # {"zones": {idx: effect dict}, "keys": {zone: rgb}, "brightness": n}
     key_actions: dict[str, Action] = field(default_factory=dict)  # keyboard key name -> action (host mode)
+    # The second keyboard layer, held open by a key assigned "G-Shift". Same shape
+    # as gshift_buttons: a key with no entry here keeps its key_actions action, so
+    # a half-filled layer changes only what it names.
+    gshift_key_actions: dict[str, Action] = field(default_factory=dict)
 
     # -- json -----------------------------------------------------------------
     def to_dict(self) -> dict:
@@ -50,6 +54,7 @@ class Profile:
             "macros": [m.to_dict() for m in self.macros],
             "lighting": self.lighting,
             "key_actions": {k: v.to_dict() for k, v in sorted(self.key_actions.items())},
+            "gshift_key_actions": {k: v.to_dict() for k, v in sorted(self.gshift_key_actions.items())},
         }
 
     @classmethod
@@ -66,6 +71,7 @@ class Profile:
             macros=[Macro.from_dict(m) for m in d.get("macros", [])],
             lighting=d.get("lighting", {}),
             key_actions={k: Action.from_dict(v) for k, v in d.get("key_actions", {}).items()},
+            gshift_key_actions={k: Action.from_dict(v) for k, v in d.get("gshift_key_actions", {}).items()},
         )
 
     def macro(self, name: str) -> Macro | None:
