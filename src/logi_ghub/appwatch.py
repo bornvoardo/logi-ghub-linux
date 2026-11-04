@@ -283,7 +283,18 @@ class Watcher:
 
     # -- KWin script -----------------------------------------------------------
     def script_path(self) -> Path:
-        return Path(__file__).resolve().parent.parent.parent / "data" / "kwin" / "logi-ghub-focus.js"
+        """The KWin script, either beside the source tree or in the installed data dir."""
+        from .config import data_dir
+
+        candidates = (
+            Path(__file__).resolve().parent.parent.parent / "data" / "kwin" / "logi-ghub-focus.js",
+            Path(__file__).resolve().parent / "data" / "logi-ghub-focus.js",
+            data_dir() / "kwin" / "logi-ghub-focus.js",
+        )
+        for path in candidates:
+            if path.exists():
+                return path
+        return candidates[0]
 
     def _load_kwin_script(self) -> None:
         path = self.script_path()

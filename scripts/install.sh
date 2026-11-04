@@ -10,12 +10,14 @@ PREFIX="$HOME/.local"
 VENV="$PREFIX/share/logi-ghub-linux/venv"
 BIN="$PREFIX/bin"
 APPS="$PREFIX/share/applications"
+DATA="$PREFIX/share/logi-ghub-linux"
 UNITS="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 DESKTOP=io.github.theo_antonescu.LogiGhubLinux.desktop
 
 if [ "${1:-}" = "--uninstall" ]; then
     systemctl --user disable --now logi-ghubd.service 2>/dev/null || true
     rm -f "$BIN/logi-ghub" "$BIN/logi-ghub-cli" "$BIN/logi-ghubd" "$BIN/logi-ghub-tray" "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/logi-ghub-tray.desktop" "$APPS/$DESKTOP" "$UNITS/logi-ghubd.service"
+    rm -f "$DATA/kwin/logi-ghub-focus.js"
     rm -rf "$VENV"
     echo "Removed. Profiles and backups are kept in ~/.config/logi-ghub-linux and ~/.local/share/logi-ghub-linux."
     exit 0
@@ -41,6 +43,8 @@ for exe in logi-ghub logi-ghub-cli logi-ghubd logi-ghub-tray; do
 done
 sed "s|^Exec=logi-ghub|Exec=$BIN/logi-ghub|" "$REPO/data/$DESKTOP" > "$APPS/$DESKTOP"
 install -m 644 "$REPO/data/systemd/logi-ghubd.service" "$UNITS/"
+install -d "$DATA/kwin"
+install -m 644 "$REPO/data/kwin/logi-ghub-focus.js" "$DATA/kwin/"
 systemctl --user daemon-reload 2>/dev/null || true
 
 if [ "${1:-}" = "--udev" ]; then
