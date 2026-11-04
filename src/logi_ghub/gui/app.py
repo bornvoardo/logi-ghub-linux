@@ -341,14 +341,13 @@ class DevicePane(Gtk.Box):
         default_row.connect("notify::selected", lambda r, _p: self._set_app_default(names, r.get_selected()))
         g.add(default_row)
 
-        mine = [r for r in rules.rules if r.device in (None, dev.key)]
+        mine = [r for r in rules.rules if r.device == dev.key]
         if not mine:
             g.add(Adw.ActionRow(title="No applications yet",
                                 subtitle="Add a window class below, for example 'steam_app_*' or 'firefox'."))
         for rule in mine:
-            scope = "every device" if rule.device is None else dev.key
             row = Adw.ActionRow(title=GLib.markup_escape_text(rule.match),
-                                subtitle=GLib.markup_escape_text(f"{rule.profile} · {scope}"
+                                subtitle=GLib.markup_escape_text(rule.profile
                                                                  + (f" · title has {rule.title!r}" if rule.title else "")))
             rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"])
             rm.connect("clicked", lambda _b, m=rule.match, d=rule.device: self._remove_app_rule(m, d))
@@ -393,14 +392,23 @@ class DevicePane(Gtk.Box):
         dev = self.dev
         d = Adw.AlertDialog(heading="Add an application",
                             body="The window class KWin reports, a wildcard is allowed (steam_app_*, firefox).")
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        # An Adw.EntryRow needs a preferences group around it; inside a plain box
+        # the entry has no frame and looks like empty space.
+        group = Adw.PreferencesGroup()
         match = Adw.EntryRow(title="Window class")
-        box.append(match)
-        picker = Adw.ComboRow(title="Profile", model=Gtk.StringList.new(names))
-        box.append(picker)
-        everywhere = Adw.SwitchRow(title="Every device", subtitle=f"Off: only {dev.name}",
-                                   active=True)
-        box.append(everywhere)
+        group.add(match)
+        box.append(group)
+        # A ComboRow only expands inside a preferences group as well, so the profile
+        # picker is a DropDown: it opens on a click anywhere on it.
+        picker_row = Adw.ActionRow(title="Profile")
+        picker = Gtk.DropDown.new_from_strings(names)
+        picker.set_valign(Gtk.Align.CENTER)
+        picker_row.add_suffix(picker)
+        picker_row.set_activatable_widget(picker)
+        group2 = Adw.PreferencesGroup()
+        group2.add(picker_row)
+        box.append(group2)
         d.set_extra_child(box)
         d.add_response("cancel", "Cancel")
         d.add_response("add", "Add")
@@ -414,11 +422,13 @@ class DevicePane(Gtk.Box):
             if not pattern:
                 self.toast("Give a window class")
                 return
+            profile = names[picker.get_selected()]
             rules = appwatch.AppRules.load()
-            rules.add(pattern, names[picker.get_selected()], None if everywhere.get_active() else dev.key)
+            # Every rule belongs to the device whose page it was made on.
+            rules.add(pattern, profile, dev.key)
             rules.save()
             self.build_profiles()
-            self.toast(f"{pattern} → {names[picker.get_selected()]}")
+            self.toast(f"{pattern} → {profile}")
 
         d.connect("response", resp)
         d.present(self.win)

@@ -54,12 +54,23 @@ def test_adding_a_rule_for_a_missing_profile_is_refused(tmp_path, monkeypatch):
         raise AssertionError("should have refused")
 
 
-def test_adding_an_unbound_rule_succeeds(tmp_path, monkeypatch, capsys):
+def test_a_rule_always_names_its_device(tmp_path, monkeypatch):
+    """Rules are per device: each device's page makes its own."""
     path = _rules_file(tmp_path, monkeypatch)
-    cli.cmd_apps(Args(apps_cmd="add", match="steam_app_*", profile="oyun", device_model=None, title=None))
+    monkeypatch.setattr(cli.profiles, "list_profiles", lambda key: [type("P", (), {"name": "oyun"})()])
+    cli.cmd_apps(Args(apps_cmd="add", match="steam_app_*", profile="oyun", device_model="046d:c359", title=None))
     saved = json.loads(path.read_text())
     assert saved["rules"][0]["match"] == "steam_app_*"
-    assert saved["rules"][0]["device"] is None
+    assert saved["rules"][0]["device"] == "046d:c359"
+
+
+def test_two_devices_can_bind_the_same_window(tmp_path, monkeypatch):
+    path = _rules_file(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli.profiles, "list_profiles", lambda key: [type("P", (), {"name": "oyun"})()])
+    cli.cmd_apps(Args(apps_cmd="add", match="steam_app_*", profile="oyun", device_model="046d:c359", title=None))
+    cli.cmd_apps(Args(apps_cmd="add", match="steam_app_*", profile="oyun", device_model="046d:409f", title=None))
+    saved = json.loads(path.read_text())
+    assert sorted(r["device"] for r in saved["rules"]) == ["046d:409f", "046d:c359"]
 
 
 def test_removing_an_unknown_rule_says_so(tmp_path, monkeypatch):

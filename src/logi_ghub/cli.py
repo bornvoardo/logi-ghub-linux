@@ -398,22 +398,21 @@ def cmd_apps(args) -> None:
         if rules.rules:
             print("\nwindow rules:")
             for r in rules.rules:
-                bits = [f"{r.match:<24}", f"-> {r.profile:<18}"]
-                bits.append(f"[{r.device}]" if r.device else "[every device]")
+                bits = [f"[{r.device or '?'}]", f"{r.match:<24}", f"-> {r.profile}"]
                 if r.title:
-                    bits.append(f"title contains {r.title!r}")
+                    bits.append(f"(title contains {r.title!r})")
                 print("  " + " ".join(bits))
         else:
             print("\nno window rules")
         return
     if sub == "add":
         key = args.device_model
-        if key and not any(p.name == args.profile for p in profiles.list_profiles(key)):
+        if not any(p.name == args.profile for p in profiles.list_profiles(key)):
             raise SystemExit(f"no profile {args.profile!r} for {key}; create it first "
                              f"(logi-ghub-cli -d {key} profile keys {args.profile} ...)")
         rule = rules.add(args.match, args.profile, key, args.title)
         print(f"saved {rules.save()}")
-        print(f"  {rule.match} -> {rule.profile}" + (f" [{rule.device}]" if rule.device else " [every device]"))
+        print(f"  [{rule.device}] {rule.match} -> {rule.profile}")
         print("the daemon picks up the rules file within a second; no restart needed")
         return
     if sub == "remove":
@@ -620,8 +619,9 @@ def main(argv: list[str] | None = None) -> int:
     asp.add_parser("status", help="say whether the rules file and the desktop support exist")
     q = asp.add_parser("add", help="send a window to a profile")
     q.add_argument("match", help="window class pattern, e.g. 'steam_app_*' or 'firefox'")
+    q.add_argument("--device", dest="device_model", required=True,
+                   help="the device this rule belongs to, e.g. 046d:c359")
     q.add_argument("--profile", required=True, help="profile to run")
-    q.add_argument("--device", dest="device_model", help="limit to one device (046d:c359); default: every device")
     q.add_argument("--title", help="also require this text in the window title")
     q = asp.add_parser("remove", help="drop a rule")
     q.add_argument("match")
