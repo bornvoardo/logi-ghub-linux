@@ -55,3 +55,28 @@ echo "Installed. Start \"Logitech G devices\" from the app menu, or run logi-ghu
 echo "For host-mode profiles (macros beyond on-board memory, software lighting) enable the service:"
 echo "    systemctl --user enable --now logi-ghubd"
 [ -e /etc/udev/rules.d/70-logi-ghub-linux.rules ] || echo "Device access: re-run with --udev to install the udev rule."
+
+# The commands live in ~/.local/bin, which many shells do not search.
+case ":$PATH:" in
+    *":$BIN:"*) ;;
+    *)
+        shell_rc=""
+        case "$(basename "${SHELL:-sh}")" in
+            zsh)  shell_rc="$HOME/.zshrc" ;;
+            bash) shell_rc="$HOME/.bashrc" ;;
+            fish) shell_rc="$HOME/.config/fish/config.fish" ;;
+        esac
+        echo ""
+        echo "$BIN is not in your PATH, so the commands cannot be found yet."
+        if [ "$(basename "${SHELL:-sh}")" = "fish" ]; then
+            echo "Add this line to $shell_rc:"
+            echo "    fish_add_path $BIN"
+        elif [ -n "$shell_rc" ]; then
+            echo "Add this line to $shell_rc:"
+            echo "    export PATH=\"$BIN:\$PATH\""
+        else
+            echo "Add $BIN to your PATH."
+        fi
+        echo "Or use the full path for now: $BIN/logi-ghub-cli list"
+        ;;
+esac
