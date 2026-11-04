@@ -23,7 +23,12 @@ fi
 
 # The GUI needs GTK 4 + libadwaita through the system's PyGObject.
 if ! /usr/bin/python3 -c 'import gi; gi.require_version("Gtk","4.0"); gi.require_version("Adw","1")' 2>/dev/null; then
-    echo "Missing GTK 4 / libadwaita Python bindings. On Ubuntu: sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1"
+    cat >&2 <<'EOF'
+Missing GTK 4 / libadwaita Python bindings. Install them for your distribution:
+    Fedora:         sudo dnf install python3-gobject gtk4 libadwaita
+    Ubuntu/Debian:  sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
+    Arch:           sudo pacman -S python-gobject gtk4 libadwaita
+EOF
     exit 1
 fi
 
