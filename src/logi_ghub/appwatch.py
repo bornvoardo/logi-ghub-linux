@@ -362,7 +362,12 @@ class Watcher:
         if resource_class.lower() in IGNORED:
             return
         app_id = resolve_app_id(resource_class, desktop_name)
-        if app_id == self.last_app and caption == self.last_caption:
+        # Repeat only on the application, not on the title: the profile is chosen by
+        # the class, so moving between two windows of the same application cannot
+        # change it. Comparing titles as well fired on those moves and, when two
+        # windows shared a title, missed a real switch.
+        if app_id == self.last_app:
+            self.last_caption = caption
             return
         self.last_app, self.last_caption = app_id, caption
         self.on_focus(app_id, caption)

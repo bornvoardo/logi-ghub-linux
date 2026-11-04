@@ -121,19 +121,46 @@ class TestFocus:
         w.focus_changed("plasmashell", "Desktop")
         assert w.last_app is None
 
-    def test_a_repeated_focus_does_not_fire_twice(self):
+    def test_a_repeated_focus_is_handled_once(self):
         seen = []
-        w = appwatch.Watcher(appwatch.AppRules(), on_focus=lambda app, cap: seen.append(app))
+        w = appwatch.Watcher(on_focus=lambda a, c: seen.append(a))
         w.focus_changed("firefox", "Mail")
         w.focus_changed("firefox", "Mail")
         assert seen == ["firefox"]
 
-    def test_a_new_caption_fires_again(self):
+    def test_another_window_of_the_same_application_is_not_a_switch(self):
+        """The profile is chosen by the class, so a second window of the same
+        application cannot change it; firing on the title change was noise."""
+        seen = []
+        w = appwatch.Watcher(on_focus=lambda a, c: seen.append(a))
+        w.focus_changed("firefox", "Inbox — Mozilla Firefox")
+        w.focus_changed("firefox", "Calendar — Mozilla Firefox")
+        assert seen == ["firefox"]
+
+    def test_two_windows_with_the_same_title_are_still_a_real_switch(self):
+        """Comparing titles swallowed a switch between identical captions."""
+        seen = []
+        w = appwatch.Watcher(on_focus=lambda a, c: seen.append(a))
+        w.focus_changed("konsole", "furkan@fedora: ~")
+        w.focus_changed("firefox", "furkan@fedora: ~")
+        assert seen == ["konsole", "firefox"]
+
+    def test_the_caption_of_a_repeat_is_still_remembered(self):
+        """A rule narrowed by title must see the current caption, even when the
+        application did not change."""
+        w = appwatch.Watcher(on_focus=lambda a, c: None)
+        w.focus_changed("firefox", "Inbox")
+        w.focus_changed("firefox", "Calendar")
+        assert w.last_caption == "Calendar"
+
+    def test_a_new_caption_on_the_same_window_does_not_fire_again(self):
+        """A title-only change on the same window used to fire, which loaded the
+        same profile again for nothing."""
         seen = []
         w = appwatch.Watcher(appwatch.AppRules(), on_focus=lambda app, cap: seen.append(cap))
         w.focus_changed("firefox", "Mail")
         w.focus_changed("firefox", "Inbox")
-        assert seen == ["Mail", "Inbox"]
+        assert seen == ["Mail"]
 
     def test_losing_focus_clears_the_last_window(self):
         w = appwatch.Watcher(appwatch.AppRules(), on_focus=lambda *a: None)
