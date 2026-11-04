@@ -506,12 +506,31 @@ def cmd_profile(args) -> None:
             if a.kind == "macro" and not prof.macro(a.macro):
                 raise ValueError(f"no macro {a.macro!r} in profile '{prof.name}'")
             prof.key_actions[name] = a
-        if args.assign or args.reset or args.clear:
+        # The second layer: what a key does while the G-Shift key is held.
+        for spec in args.gshift_assign or []:
+            name, _, action = spec.partition("=")
+            name = keyremap.canonical(name.strip())
+            keyremap.key_code(name)
+            a = parse_action(action)
+            if a.kind == "macro" and not prof.macro(a.macro):
+                raise ValueError(f"no macro {a.macro!r} in profile '{prof.name}'")
+            prof.gshift_key_actions[name] = a
+        for name in args.gshift_reset or []:
+            keyremap.key_code(name)
+            prof.gshift_key_actions.pop(keyremap.canonical(name), None)
+        if args.gshift_clear:
+            prof.gshift_key_actions.clear()
+        if args.assign or args.reset or args.clear or args.gshift_assign or args.gshift_reset or args.gshift_clear:
             profiles.save_profile(prof)
         if not prof.key_actions:
             print("no key assignments (every key types normally)")
         for name, a in sorted(prof.key_actions.items()):
-            print(f"  {name:<14} {a.label()}")
+            gs = prof.gshift_key_actions.get(name)
+            extra = f"   | G-Shift: {gs.label()}" if gs else ""
+            print(f"  {name:<14} {a.label()}{extra}")
+        for name, a in sorted(prof.gshift_key_actions.items()):
+            if name not in prof.key_actions:
+                print(f"  {name:<14} (only in G-Shift) {a.label()}")
         if prof.key_actions and profiles.get_active().get(dev.key) != prof.name:
             print(f"run it with: logi-ghub-cli -d {dev.key} profile activate '{prof.name}' (needs logi-ghubd)")
         return
@@ -615,6 +634,10 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("assign", nargs="*", help="KEY=ACTION, e.g. CapsLock=key:LeftCtrl F1=consumer:Mute Pause=macro:hello")
     q.add_argument("--reset", action="append", metavar="KEY", help="give a key back its normal function")
     q.add_argument("--clear", action="store_true", help="remove all key assignments")
+    q.add_argument("--gshift", dest="gshift_assign", action="append", metavar="KEY=ACTION",
+                   help="what a key does while the G-Shift key is held, e.g. G6=special:G-Shift A=key:Esc")
+    q.add_argument("--gshift-reset", action="append", metavar="KEY", help="drop one key from the G-Shift layer")
+    q.add_argument("--gshift-clear", action="store_true", help="empty the G-Shift layer")
     q = psp.add_parser("activate", help="have the daemon run a profile in host mode ('none' to stop)")
     q.add_argument("name")
 

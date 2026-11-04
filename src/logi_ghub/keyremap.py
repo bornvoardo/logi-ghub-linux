@@ -146,7 +146,11 @@ def find_event_nodes(hidraw_path: str, behind_receiver: bool, sys_hidraw: Path =
 
 # --- the remapping itself ----------------------------------------------------------------
 def resolve(key_actions: dict[str, Action]) -> dict[int, Action]:
-    """Profile key assignments by evdev code; keys left at "default" type normally."""
+    """Profile key assignments by evdev code; keys left at "default" type normally.
+
+    Used for both layers: the result of the second layer is what a key does while
+    the G-Shift key is held.
+    """
     out = {}
     for name, action in key_actions.items():
         if action.kind == "default":

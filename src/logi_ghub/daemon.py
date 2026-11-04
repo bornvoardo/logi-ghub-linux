@@ -176,12 +176,17 @@ class Session:
 
     def ensure_keys(self) -> None:
         """Start key remapping if the profile has key assignments and it isn't running (again after a reconnect)."""
-        if not self.profile.key_actions or self.vinput is None or getattr(self.dev, "fake_model", None) is not None:
+        if self.vinput is None or getattr(self.dev, "fake_model", None) is not None:
+            return
+        if not (self.profile.key_actions or self.profile.gshift_key_actions):
             return
         if self.remapper is not None and (self.remapper.running or self.remapper.panicked):
             return  # after the escape keys, stay off until the profile is saved or activated again
         mapping = keyremap.resolve(self.profile.key_actions)
-        if not mapping:
+        # The second layer may name keys the first does not, so it decides on its
+        # own whether there is anything to remap.
+        gshift_mapping = keyremap.resolve(self.profile.gshift_key_actions)
+        if not mapping and not gshift_mapping:
             return
         info = self.dev.info
         nodes = keyremap.find_event_nodes(info.path, info.behind_receiver)
@@ -189,7 +194,8 @@ class Session:
             self._keys_problem("no keyboard input device found next to %s; key assignments not active", info.path)
             return
         remapper = keyremap.KeyRemapper(self.dev.name, nodes, mapping, pointer=self.vinput, runner=self.runner,
-                                        macros={m.name: m for m in self.profile.macros}, tag=f"{self.dev.key}:keys")
+                                        macros={m.name: m for m in self.profile.macros}, tag=f"{self.dev.key}:keys",
+                                        gshift_mapping=gshift_mapping, on_layer=self.on_gshift)
         try:
             remapper.start()
         except PermissionError as e:
@@ -200,6 +206,15 @@ class Session:
             self._keys_problem("key assignments not active: %s", e)
             return
         self.remapper = remapper
+
+    def on_gshift(self, on: bool) -> None:
+        """The keyboard's G-Shift key opened or closed its second layer.
+
+        Called on the key reader thread, so it only records and queues: touching
+        the device or the events queue from here would block typing.
+        """
+        self.gshift = on
+        self.events.put(("gshift", self, on))
 
     def _keys_problem(self, msg: str, *args) -> None:
         """ensure_keys runs again on every rescan; say what's wrong once."""
