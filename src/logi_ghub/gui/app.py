@@ -130,6 +130,8 @@ class DevicePane(Gtk.Box):
         if os.environ.get("LOGI_GHUB_PAGE"):
             GLib.idle_add(lambda: self.stack.set_visible_child_name(os.environ["LOGI_GHUB_PAGE"]) and False)
         self.groups: dict[str, list] = {k: [] for k in self.pages}
+        self._active_monitor = None
+        self._pending_redraw = 0
         self.load()
 
     # -- helpers ---------------------------------------------------------------------
@@ -321,8 +323,9 @@ class DevicePane(Gtk.Box):
 
         g = self.add_group("profiles", Adw.PreferencesGroup(
             title="By application",
-            description="When a window with one of these classes takes focus, the device runs that profile. "
-                        "Switching is done by the logi-ghubd service (restart it after changing the on/off switch)."))
+            description="A rule sends a window to a profile: when a window with one of these classes takes focus, "
+                        "the device runs that profile. Rules are tried in order. "
+                        "These are not profiles; the profiles themselves are under “Profiles on this computer”."))
         on = Gtk.Switch(active=rules.enabled, valign=Gtk.Align.CENTER,
                         tooltip_text="Switch profiles when the focused window changes")
         on.connect("notify::active", lambda s, _p: self._set_app_rules_enabled(s.get_active()))
@@ -335,7 +338,7 @@ class DevicePane(Gtk.Box):
         for name in names:
             choices.append(name)
         default_row = Adw.ComboRow(title="Default profile", model=choices,
-                                   subtitle="Used when no application rule matches")
+                                   subtitle="Used when no rule matches")
         current = rules.defaults.get(dev.key)
         default_row.set_selected(names.index(current) + 1 if current in names else 0)
         default_row.connect("notify::selected", lambda r, _p: self._set_app_default(names, r.get_selected()))
@@ -343,8 +346,8 @@ class DevicePane(Gtk.Box):
 
         mine = [r for r in rules.rules if r.device == dev.key]
         if not mine:
-            g.add(Adw.ActionRow(title="No applications yet",
-                                subtitle="Add a window class below, for example 'steam_app_*' or 'firefox'."))
+            g.add(Adw.ActionRow(title="No rules yet",
+                                subtitle="Add one below: a window class, and the profile it should run."))
         else:
             g.add(Adw.ActionRow(title="Checked in order, first match wins",
                                 subtitle="Use the arrows to change which rule is tried first."))
@@ -376,7 +379,7 @@ class DevicePane(Gtk.Box):
             row.connect("activated", lambda _r, ru=rule: self._add_app_rule(names, ru))
             g.add(row)
 
-        add = Gtk.Button(label="Add application", valign=Gtk.Align.CENTER)
+        add = Gtk.Button(label="Add rule", valign=Gtk.Align.CENTER)
         add.connect("clicked", lambda *_: self._add_app_rule(names))
         g.set_header_suffix(add)
 
@@ -488,7 +491,7 @@ class DevicePane(Gtk.Box):
         dev = self.dev
         editing = rule is not None
         d = Adw.AlertDialog(
-            heading="Edit application" if editing else "Add an application",
+            heading="Edit rule" if editing else "Add a rule",
             body="The window class KWin reports, a wildcard is allowed (steam_app_*, firefox).")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         # An Adw.EntryRow needs a preferences group around it; inside a plain box
@@ -597,8 +600,10 @@ class DevicePane(Gtk.Box):
                 g.add(row)
 
         g = self.add_group("profiles", Adw.PreferencesGroup(
-            title="On this computer",
-            description="One profile runs on a device at a time. Pick it with Use; the text under each name says what it contains."))
+            title="Profiles on this computer",
+            description="A profile is a set of assignments stored here. One profile runs on a device at a time: "
+                        "pick it with Use, or let a rule under “By application” pick it for you. "
+                        "Click a profile to rename it."))
         new = Gtk.Button(label="Save current as…", valign=Gtk.Align.CENTER)
         new.connect("clicked", lambda *_: self.save_as_dialog())
         g.set_header_suffix(new)
@@ -612,7 +617,9 @@ class DevicePane(Gtk.Box):
             else:
                 summary = f"{'/'.join(map(str, prof.dpi_stages))} DPI · {len(prof.macros)} macros"
             running = prof.name == active
-            row = Adw.ActionRow(title=GLib.markup_escape_text(prof.name), subtitle=summary)
+            row = Adw.ActionRow(title=GLib.markup_escape_text(prof.name), subtitle=summary,
+                                activatable=True, tooltip_text="Click to rename")
+            row.connect("activated", lambda _r, pr=prof: self.rename_profile(pr))
             if running:
                 # Say why this one is running when a window rule put it there:
                 # the user did not press Use, so a bare check mark looks wrong.
@@ -708,6 +715,88 @@ class DevicePane(Gtk.Box):
         profiles.set_active(self.dev.key, name)
         self.toast(f"“{name}” will run in host mode" if name else "Back to on-board profiles")
         self.build_profiles()
+
+    def rename_profile(self, prof):
+        """Ask for a new name and carry it everywhere the old one is used."""
+        d = Adw.AlertDialog(heading="Rename profile",
+                            body="Window rules that run this profile are updated too.")
+        entry = Adw.EntryRow(title="Name")
+        entry.set_text(prof.name)
+        group = Adw.PreferencesGroup()
+        group.add(entry)
+        d.set_extra_child(group)
+        d.add_response("cancel", "Cancel")
+        d.add_response("rename", "Rename")
+        d.set_response_appearance("rename", Adw.ResponseAppearance.SUGGESTED)
+        d.set_default_response("rename")
+
+        def resp(_d, r):
+            if r != "rename":
+                return
+            new = entry.get_text().strip()
+            if not new:
+                self.toast("Give the profile a name")
+                return
+            if new == prof.name:
+                return
+            try:
+                profiles.rename_profile(self.dev.key, prof.name, new)
+            except ValueError as e:
+                self.toast(str(e))
+                return
+            except OSError as e:
+                self.toast(f"Could not rename: {e}")
+                return
+            # The pane may be showing the profile that was just renamed.
+            if self.profile is not None and self.profile.name == prof.name:
+                self.profile.name = new
+            self.build_profiles()
+            self.toast(f"Renamed to “{new}”")
+
+        d.connect("response", resp)
+        d.present(self.win)
+
+    def watch_active_changes(self) -> bool:
+        """Redraw the profile list when something else switches a profile.
+
+        A window rule is applied by logi-ghubd, not here, so the list kept showing
+        whatever was active when the page was last built. Watching active.json is
+        the cheapest way to follow it: GIO reports a change, this redraws only the
+        profile rows, and nothing polls.
+
+        Only while the Profiles page is on screen and nothing is being edited:
+        redrawing under an open dialog would drop what the user typed.
+        """
+        try:
+            path = profiles._active_path()
+            if self._active_monitor is None:
+                # The file may not exist yet; watch the directory so creating it counts.
+                target = path if path.exists() else path.parent
+                self._active_monitor = Gio.File.new_for_path(str(target)).monitor_file(
+                    Gio.FileMonitorFlags.NONE, None)
+                self._active_monitor.connect("changed", self._on_active_changed)
+        except (GLib.Error, OSError) as e:
+            # A missing monitor only means the list is not live; the page still works.
+            self._active_monitor = None
+            return False
+        return True
+
+    def _on_active_changed(self, *_args):
+        if self.current_pane is None or self.current_pane.dirty:
+            return
+        if self.stack.get_visible_child_name() != "profiles":
+            return
+        if self._pending_redraw:
+            return
+        # Coalesce: a switch writes active.json and app-state.json together.
+        self._pending_redraw = GLib.timeout_add(150, self._redraw_profiles)
+
+    def _redraw_profiles(self) -> bool:
+        self._pending_redraw = 0
+        pane = self.current_pane
+        if pane is not None and not pane.dirty and self.stack.get_visible_child_name() == "profiles":
+            pane.build_profiles()
+        return False
 
     def backup_now(self):
         run_async(lambda: ob.save_backup(self.dev.onboard, self.dev.key), lambda p: self.toast(f"Backup saved: {p.name}"), self.fail)
@@ -1708,6 +1797,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.scan()
         if not fake:
             GLib.timeout_add_seconds(10, self.wake_check)
+            self.watch_active_changes()
 
     def _on_close_request(self, *_args) -> bool:
         """Block the window from closing while a pane has unsaved edits."""

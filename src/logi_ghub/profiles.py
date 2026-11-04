@@ -211,6 +211,41 @@ def save_profile(profile: Profile) -> Path:
     return path
 
 
+def rename_profile(model_key: str, old_name: str, new_name: str) -> Path:
+    """Change a profile's name, keeping its contents and its places in the app.
+
+    The name is also the file name, so this writes the new file, removes the old
+    one, and carries the name over to the two places that refer to it: the active
+    profile for the device and any window rule that runs it. Without that, a
+    rename would silently stop a rule from matching.
+    """
+    profile = load_profile(model_key, old_name)
+    if new_name == old_name:
+        return save_profile(profile)
+    if any(p.name == new_name for p in list_profiles(model_key)):
+        raise ValueError(f"a profile called {new_name!r} already exists")
+
+    profile.name = new_name
+    path = save_profile(profile)
+    delete_profile(model_key, old_name)
+
+    active = get_active()
+    if active.get(model_key) == old_name:
+        set_active(model_key, new_name)
+
+    from . import appwatch
+    rules = appwatch.AppRules.load()
+    changed = False
+    for rule in rules.rules:
+        if rule.profile == old_name and rule.device in (None, model_key):
+            rule.profile = new_name
+            changed = True
+    if changed:
+        rules.save()
+
+    return path
+
+
 def delete_profile(model_key: str, name: str) -> None:
     (profile_dir(model_key) / f"{_slug(name)}.json").unlink(missing_ok=True)
 
