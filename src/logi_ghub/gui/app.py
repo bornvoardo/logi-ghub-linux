@@ -1068,22 +1068,25 @@ class DevicePane(Gtk.Box):
                             self.keyboard_layout())
         view.paint_on_drag = False
         names = {zone: cap.name for zone, cap in view.buttons.items()}
-        view.set_colors({zone: 0x3584E4 for zone, name in names.items() if name in p.key_actions})
+        # A key that only has a second-layer assignment is still worth marking,
+        # otherwise the drawing says the key is untouched while it is not.
+        view.set_colors({zone: 0x3584E4 for zone, name in names.items()
+                         if name in p.key_actions or name in p.gshift_key_actions})
         view.on_paint = lambda zone: self.edit_key(names[zone])
         g.add(view)
 
-        g = self.add_group("buttons", Adw.PreferencesGroup(title="Assigned keys"))
-        if not p.key_actions:
+        g = self.add_group("buttons", Adw.PreferencesGroup(
+            title="Assigned keys",
+            description="The second layer is what a key does while the G-Shift key is held."))
+        if not p.key_actions and not p.gshift_key_actions:
             g.add(Adw.ActionRow(title="Every key types normally"))
         for name, a in sorted(p.key_actions.items()):
-            row = Adw.ActionRow(title=GLib.markup_escape_text(layout_label(name)), subtitle=GLib.markup_escape_text(a.label()),
-                                activatable=True)
-            reset = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Type normally again")
-            reset.add_css_class("flat")
-            reset.connect("clicked", lambda _b, n=name: self.reset_key(n))
-            row.add_suffix(reset)
-            row.connect("activated", lambda _r, n=name: self.edit_key(n))
-            g.add(row)
+            g.add(self._key_row(name, a, gshift=False))
+        # The G-Shift layer is listed under the same heading, marked so the two
+        # readings of one key cannot be confused: the second layer only applies
+        # while the trigger is held.
+        for name, a in sorted(p.gshift_key_actions.items()):
+            g.add(self._key_row(name, a, gshift=True))
         blocked = self.key_access_problem()
         if blocked:
             warn = Adw.ActionRow(title="Key assignments can't run yet", subtitle=GLib.markup_escape_text(blocked))
@@ -1093,6 +1096,31 @@ class DevicePane(Gtk.Box):
             note = Adw.ActionRow(title="Not running", subtitle="Turn on Host mode for this profile on the Profiles page to use these keys.")
             note.add_prefix(Gtk.Image.new_from_icon_name("dialog-information-symbolic"))
             g.add(note)
+
+    def _key_row(self, name: str, a: Action, gshift: bool) -> Adw.ActionRow:
+        """One line of "Assigned keys": what a key does, and in which layer.
+
+        A key can be listed twice — once for each layer — so the second-layer line
+        says so in the subtitle. Without that the two readings of the same key look
+        like a contradiction.
+        """
+        label = layout_label(name)
+        what = a.label()
+        if gshift:
+            title = f"{label} (G-Shift)"
+            subtitle = f"{what} · only while G-Shift is held"
+        else:
+            title = label
+            subtitle = what
+        row = Adw.ActionRow(title=GLib.markup_escape_text(title), subtitle=GLib.markup_escape_text(subtitle),
+                            activatable=True)
+        reset = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER,
+                           tooltip_text="Remove this G-Shift assignment" if gshift else "Type normally again")
+        reset.add_css_class("flat")
+        reset.connect("clicked", lambda _b, n=name, gs=gshift: self.reset_key(n, gshift=gs))
+        row.add_suffix(reset)
+        row.connect("activated", lambda _r, n=name, gs=gshift: self.edit_key(n, gshift=gs))
+        return row
 
     def key_access_problem(self) -> str | None:
         """Why the service couldn't take over this keyboard's keys, or None."""
@@ -1106,27 +1134,30 @@ class DevicePane(Gtk.Box):
                     "~/logi-ghub-linux/scripts/install.sh --udev")
         return None
 
-    def edit_key(self, name: str):
+    def edit_key(self, name: str, gshift: bool = False):
         try:
             keyremap.key_code(name)
         except ValueError:
             self.toast(f"The {layout_label(name)} key is handled inside the keyboard and can't be reassigned")
             return
         p = self.profile
-        current = p.key_actions.get(name, Action("default"))
+        layer = p.gshift_key_actions if gshift else p.key_actions
+        current = layer.get(name, Action("default"))
 
         def done(a: Action):
             if a.kind == "default":
-                p.key_actions.pop(name, None)
+                layer.pop(name, None)
             else:
-                p.key_actions[name] = a
+                layer[name] = a
             self.mark_dirty()
             self.build_buttons()
 
-        ActionDialog(layout_label(name), current, [m.name for m in p.macros], done).present(self.win)
+        title = f"{layout_label(name)} (G-Shift)" if gshift else layout_label(name)
+        ActionDialog(title, current, [m.name for m in p.macros], done).present(self.win)
 
-    def reset_key(self, name: str):
-        self.profile.key_actions.pop(name, None)
+    def reset_key(self, name: str, gshift: bool = False):
+        layer = self.profile.gshift_key_actions if gshift else self.profile.key_actions
+        layer.pop(name, None)
         self.mark_dirty()
         self.build_buttons()
 
