@@ -262,28 +262,21 @@ class DevicePane(Gtk.Box):
         else:
             self.light_state = "onboard"
         if self.target is None:
-            if self.light_state == "service" and not self.slots:
+            # The default profile comes first, on every device. Opening the page on
+            # an on-board slot put the device's own memory in front of the profile
+            # that actually runs, and a mouse user had to hunt for it.
+            default = profiles.ensure_default(self.dev.key)
+            if self.light_state == "service" and active_name:
                 try:
-                    self.edit_computer(profiles.load_profile(self.dev.key, active_name))
-                    return
+                    default = profiles.load_profile(self.dev.key, active_name)
                 except (OSError, ValueError, KeyError):
                     pass
-            if self.slots:
-                active = next((p for p in self.slots if p.sector == self.active_slot), self.slots[0])
-                self.edit_slot(active.sector)
-            else:
-                existing = profiles.list_profiles(self.dev.key)
-                if existing:
-                    self.edit_computer(existing[0])
-                else:
-                    self.profile = profiles.Profile(name="Default", device=self.dev.key)
-                    self.target = ("computer", "Default")
-                    self.dirty = True  # exists only in memory until saved
-                if self.light_state == "app" and applied is not None and self.profile.lighting != applied:
-                    # show what this app last put on the keyboard, which is what it is showing now
-                    self.profile.lighting = applied
-                    self.dirty = True
-                self.rebuild()
+            self.edit_computer(default)
+            if self.light_state == "app" and applied is not None and self.profile.lighting != applied:
+                # show what this app last put on the keyboard, which is what it is showing now
+                self.profile.lighting = applied
+                self.dirty = True
+            self.rebuild()
         else:
             self.rebuild()
 
