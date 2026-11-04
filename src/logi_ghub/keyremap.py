@@ -380,6 +380,22 @@ class KeyRemapper:
         if self.on_layer is not None:
             self.on_layer(on)
 
+    def set_layer_from_outside(self, on: bool) -> None:
+        """Open or close the layer because another device's trigger moved.
+
+        The mouse's G-Shift button and the keyboard's are the same layer, so this
+        device has to follow whichever one was pressed. The change is applied to the
+        mapper directly and does not call back, or the two devices would keep
+        echoing the same press at each other.
+        """
+        mapper = self.mapper
+        if mapper is None:
+            return
+        if on == mapper.gshift:
+            return
+        mapper.gshift = on
+        log.info("%s: G-Shift layer %s (from another device)", self.name, "open" if on else "closed")
+
     def _wait_for_keys_up(self, timeout: float = 3.0) -> None:
         """Grabbing while a key is down would leave the desktop thinking it is still held."""
         deadline = time.monotonic() + timeout

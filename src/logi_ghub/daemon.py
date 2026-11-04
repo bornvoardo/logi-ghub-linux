@@ -513,6 +513,11 @@ class Daemon:
         """Every running profile redraws its button remapping for the new layer."""
         for session in list(self.sessions.values()):
             session.apply_remapping()
+            # The keyboard's layer lives in its key remapper, not in the button
+            # table, so a mouse trigger has to reach it explicitly.
+            remapper = session.remapper
+            if remapper is not None:
+                remapper.set_layer_from_outside(on)
         self._publish_layer(on)
 
     def _publish_layer(self, on: bool) -> None:
