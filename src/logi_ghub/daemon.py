@@ -426,8 +426,6 @@ class Daemon:
         # Drop sessions whose profile was deactivated or changed.
         for key, s in list(self.sessions.items()):
             if active.get(key) != s.profile.name or s.profile_mtime != _profile_mtime(key, s.profile.name):
-                if active.get(key) not in (None, s.profile.name):
-                    self._announce(active[key])
                 self.end(key)
         for s in self.sessions.values():
             s.ensure_keys()
@@ -457,6 +455,9 @@ class Daemon:
                 session.apply()
                 handback.clear(dev.key)  # a new session ends with its own hand-back
                 self.sessions[dev.key] = session
+                # Announce only after apply() returned, so a profile that failed to
+                # load is never named as the running one.
+                self._announce(dev.name, name)
             except (OSError, HIDPPError, DeviceOffline, TimeoutError, ValueError) as e:
                 log.warning("%s: cannot start profile '%s': %s", dev.name, name, e)
                 dev.close()
@@ -518,27 +519,33 @@ class Daemon:
                 self.sessions.pop(s.dev.key, None)
         self.shutdown()
 
-    def _announce(self, profile_name: str) -> None:
-        """Say which profile is now running, in one short line.
+    def _announce(self, device_name: str, profile_name: str) -> None:
+        """Say which profile is now running: "device — profile".
 
-        The notification is not replaced afterwards: the freedesktop service returns
-        the id it assigned, and that id is what a later message would have to reuse.
-        A short timeout keeps a run of window switches from stacking up.
+        Called after the session applied, so the message never names a profile that
+        failed to load. Every switch notifies, including the first one after start,
+        which is what made the notification look intermittent before.
         """
         from .notify import notify
 
-        notify(profile_name)
+        notify(f"{device_name} — {profile_name}")
 
     def start_app_watch(self) -> None:
-        """Turn on application profiles when a rules file exists."""
+        """Start watching the focused window.
+
+        This used to return early when app-profiles.json did not exist yet, so a rule
+        added from the app while the service was running needed a restart before
+        anything happened. The watcher now always runs: with no rules it simply does
+        nothing, and the first rule takes effect on the next focus change.
+        """
         from . import appwatch
 
-        if not appwatch.rules_path().exists():
-            return
         try:
             watcher = appwatch.Watcher()
             if watcher.start():
                 self.watcher = watcher
+            else:
+                log.warning("application profiles are off: %s", watcher.reason)
         except Exception as e:  # noqa: BLE001 - window tracking must never stop the profiles
             log.warning("application profiles unavailable: %s", e)
 

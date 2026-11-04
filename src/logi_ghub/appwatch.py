@@ -238,6 +238,7 @@ class Watcher:
         self.on_focus = on_focus or self._apply
         self.last_app: str | None = None
         self.last_caption = ""
+        self.reason = "not started"
         self._loop = None
         self._bus = None
         self._thread: threading.Thread | None = None
@@ -245,18 +246,27 @@ class Watcher:
 
     # -- lifecycle -------------------------------------------------------------
     def start(self) -> bool:
-        """Register the service and load the KWin script. False if kde or Gio is missing."""
+        """Register the service and load the KWin script. False if the desktop cannot host it."""
+        self.reason = ""
         try:
             import gi
 
             gi.require_version("Gio", "2.0")
             from gi.repository import Gio, GLib
         except (ImportError, ValueError) as e:
-            log.info("application profiles need PyGObject (%s); not watching windows", e)
+            self.reason = f"PyGObject is missing ({e})"
+            log.info("application profiles need PyGObject; not watching windows")
             return False
-        if not os.environ.get("XDG_CURRENT_DESKTOP", "").lower().startswith(("kde", "plasma")):
-            log.info("application profiles are implemented for KDE; this desktop is %s",
-                     os.environ.get("XDG_CURRENT_DESKTOP") or "unknown")
+        if not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+            self.reason = "no session bus address in the environment"
+            log.info("application profiles need the session bus; not watching windows")
+            return False
+        # XDG_CURRENT_DESKTOP is not set in a systemd user service on every distro.
+        # Absence is a hint, not a verdict: ask KWin whether it is there instead.
+        desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
+        if desktop and not desktop.lower().startswith(("kde", "plasma")):
+            self.reason = f"this desktop is {desktop}, not KDE"
+            log.info("application profiles are implemented for KDE; this desktop is %s", desktop)
             return False
 
         self._Gio, self._GLib = Gio, GLib
@@ -271,6 +281,7 @@ class Watcher:
         self._loop = GLib.MainLoop()
         self._thread = threading.Thread(target=self._loop.run, name="app-watch", daemon=True)
         self._thread.start()
+        self.reason = "running"
         log.info("watching window focus for application profiles")
         return True
 

@@ -477,8 +477,7 @@ class DevicePane(Gtk.Box):
 
         g = self.add_group("profiles", Adw.PreferencesGroup(
             title="On this computer",
-            description="Profiles saved in ~/.config/logi-ghub-linux. Run one in host mode (the logi-ghubd service applies it), "
-                        "or write it into an on-board slot."))
+            description="One profile runs on a device at a time. Pick it with Use; the text under each name says what it contains."))
         new = Gtk.Button(label="Save current as…", valign=Gtk.Align.CENTER)
         new.connect("clicked", lambda *_: self.save_as_dialog())
         g.set_header_suffix(new)
@@ -491,12 +490,19 @@ class DevicePane(Gtk.Box):
                 summary = f"{len(prof.key_actions)} key assignments · {len(prof.macros)} macros"
             else:
                 summary = f"{'/'.join(map(str, prof.dpi_stages))} DPI · {len(prof.macros)} macros"
+            running = prof.name == active
             row = Adw.ActionRow(title=GLib.markup_escape_text(prof.name), subtitle=summary)
+            if running:
+                row.add_prefix(Gtk.Image.new_from_icon_name("object-select-symbolic"))
             if dev.hidpp is not None:  # host mode needs HID++ (not available on the G600)
-                sw = Gtk.Switch(active=prof.name == active, valign=Gtk.Align.CENTER, tooltip_text="Run in host mode")
-                sw.connect("notify::active", lambda s, _p, n=prof.name: self.set_host(n if s.get_active() else None))
-                row.add_suffix(Gtk.Label(label="Host mode", css_classes=["dim-label"]))
-                row.add_suffix(sw)
+                # A switch read like "on/off", but a device runs exactly one profile:
+                # turning one on silently turned the other off. A button says what it
+                # does, and focusing a window can switch it the same way.
+                use = Gtk.Button(label="Running" if running else "Use", valign=Gtk.Align.CENTER,
+                                 css_classes=["suggested-action"] if not running else [],
+                                 sensitive=not running)
+                use.connect("clicked", lambda _b, n=prof.name: self.set_host(n))
+                row.add_suffix(use)
             menu = Gio.Menu()
             for p in self.slots:
                 menu.append(f"Write to on-board slot {p.sector}", f"pane.write-slot::{prof.name}\x1f{p.sector}")

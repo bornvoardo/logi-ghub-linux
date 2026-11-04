@@ -45,22 +45,46 @@ def test_a_rule_row_can_be_activated_to_edit_it():
     assert 'row.connect("activated", lambda _r, ru=rule: self._add_app_rule(names, ru))' in src
 
 
-def test_switching_a_profile_says_so():
+def test_switching_a_profile_says_which_device_and_which_profile():
     src = (ROOT / "src" / "logi_ghub" / "daemon.py").read_text()
-    assert "def _announce(self, profile_name" in src
-    assert "notify(profile_name)" in src
+    assert "def _announce(self, device_name: str, profile_name: str)" in src
+    assert 'notify(f"{device_name} — {profile_name}")' in src
 
 
-def test_the_notification_is_short_lived_and_names_the_profile():
-    """It is a passing message, not something to dismiss."""
-    from logi_ghub import notify as notify_mod
+def test_the_notification_comes_after_the_profile_applied():
+    """A profile that fails to load must not be announced as running."""
+    src = (ROOT / "src" / "logi_ghub" / "daemon.py").read_text()
+    applied = src.index("session.apply()")
+    announced = src.index("self._announce(dev.name, name)")
+    assert applied < announced
 
+
+def test_the_first_profile_after_start_is_announced_too():
+    """The message used to be tied to dropping an old session, so the first load
+    after start was silent and it looked intermittent."""
+    src = (ROOT / "src" / "logi_ghub" / "daemon.py").read_text()
+    scan = src[src.index("def scan(self)"):src.index("def end(self, key")]
+    # The teardown loop must not speak; only a successful start does.
+    teardown = scan[:scan.index("for s in self.sessions.values()")]
+    assert "_announce" not in teardown
+    assert "self._announce(dev.name, name)" in scan
+
+
+def test_window_watching_starts_even_without_a_rules_file():
+    """A rule added from the app used to need a service restart."""
+    src = (ROOT / "src" / "logi_ghub" / "daemon.py").read_text()
+    body = src[src.index("def start_app_watch(self)"):src.index("def shutdown(self)")]
+    assert "rules_path().exists()" not in body
+
+
+def test_the_notification_is_short_lived():
     src = (ROOT / "src" / "logi_ghub" / "notify.py").read_text()
     assert "expire_ms: int = 3000" in src
-    assert notify_mod.APP_NAME
 
 
-def test_unloading_a_profile_says_nothing():
-    """Turning the profile off is not a switch to another profile."""
-    src = (ROOT / "src" / "logi_ghub" / "daemon.py").read_text()
-    assert "if active.get(key) not in (None, s.profile.name):" in src
+def test_a_device_runs_one_profile_so_the_picker_is_a_button():
+    """A switch implied independent on/off states for a one-of-many choice."""
+    src = (ROOT / "src" / "logi_ghub" / "gui" / "app.py").read_text()
+    body = src[src.index('title="On this computer"'):src.index("def set_host")]
+    assert "Gtk.Switch" not in body
+    assert 'label="Running" if running else "Use"' in body
