@@ -669,8 +669,12 @@ class DevicePane(Gtk.Box):
                 # The default profile is the device's fallback: deleting it would
                 # leave nothing to fall back to, so the entry is not offered.
                 menu.append("Delete", f"pane.delete-profile::{prof.name}")
-            mb = Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=menu, valign=Gtk.Align.CENTER)
-            row.add_suffix(mb)
+            # A keyboard has no on-board slots, so for its default profile every
+            # entry is withheld and the button would open an empty menu. Hide it
+            # instead of showing a button that does nothing.
+            if menu.get_n_items():
+                mb = Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=menu, valign=Gtk.Align.CENTER)
+                row.add_suffix(mb)
             e = Gtk.Button(label="Edit", valign=Gtk.Align.CENTER, sensitive=self.target != ("computer", prof.name))
             e.connect("clicked", lambda _b, pr=prof: self.switch_target(lambda: self.edit_computer(pr)))
             row.add_suffix(e)
