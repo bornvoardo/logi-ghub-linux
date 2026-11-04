@@ -1787,6 +1787,48 @@ class DevicePane(Gtk.Box):
         run_async(work, done, self.fail)
 
     # -- info page --------------------------------------------------------------------------
+    def _add_mode_row(self, group: Adw.PreferencesGroup):
+        """Where the device runs from: its own memory, or this app's profile.
+
+        Only devices with on-board profiles can switch, so the row is not offered on
+        a keyboard that has none.
+        """
+        if self.dev.onboard is None:
+            return
+        choices = Gtk.StringList()
+        for label in ("On-board", "Host"):
+            choices.append(label)
+        row = Adw.ComboRow(title="Device mode", model=choices,
+                           subtitle="On-board runs the device's own slot; Host runs this app's profile")
+        current = ob.MODE_ONBOARD if self.mode == ob.MODE_ONBOARD else ob.MODE_HOST
+        row.set_selected(0 if current == ob.MODE_ONBOARD else 1)
+
+        def chosen(r, _p):
+            want = ob.MODE_ONBOARD if r.get_selected() == 0 else ob.MODE_HOST
+            if want == self.mode:
+                return
+            self.set_device_mode(want)
+
+        row.connect("notify::selected", chosen)
+        group.add(row)
+
+    def set_device_mode(self, mode: int):
+        """Switch the device between its own memory and this app's profile."""
+        onboard = self.dev.onboard
+        if onboard is None:
+            return
+
+        def work():
+            onboard.set_mode(mode)
+            return onboard.get_mode()
+
+        def done(now):
+            self.mode = now
+            self.toast("Device mode: on-board" if now == ob.MODE_ONBOARD else "Device mode: host")
+            self.load()
+
+        run_async(work, done, self.fail)
+
     def build_info(self):
         self.page_reset("info")
         info = self.info
@@ -1801,6 +1843,11 @@ class DevicePane(Gtk.Box):
             r = Adw.ActionRow(title=title, subtitle=GLib.markup_escape_text(str(value)))
             r.add_css_class("property")
             g.add(r)
+            if title == "Battery":
+                self._add_mode_row(g)
+        if "battery" not in info:
+            # A corded device has no battery row to sit under, so the mode goes last.
+            self._add_mode_row(g)
         g2 = self.add_group("info", Adw.PreferencesGroup(title="HID++ features"))
         expander = Adw.ExpanderRow(title=f"{len(info.get('features', {}))} features")
         for name, idx in info.get("features", {}).items():
