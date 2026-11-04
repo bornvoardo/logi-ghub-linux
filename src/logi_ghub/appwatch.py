@@ -633,8 +633,10 @@ class Watcher:
                             app_id, name, device)
                 continue
             wanted[device] = name
-            # The rule's own name, or the window class when it has none.
-            labels[device] = rule.display_name(app_id) if rule is not None else app_id
+            # The rule's own name. Falling back to the default has no rule, and the
+            # window that ended the previous rule is not what chose it: naming it
+            # there read as "chosen for <the app you just left>".
+            labels[device] = rule.display_name(app_id) if rule is not None else ""
             # A switch back to the default has no rule of its own; it keeps the
             # default settings rather than borrowing the last rule's.
             announce[device] = rule.notify if rule is not None else True
