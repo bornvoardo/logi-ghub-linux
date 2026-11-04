@@ -74,6 +74,28 @@ MAIN_ROWS: list[list[tuple[str | None, float]]] = [
      ("Menu", 1.25), ("RightCtrl", 1.25)],
 ]
 
+# The ISO variant of the same board: three keys between L and Enter (# ~, ; :, ' @),
+# a one-unit key between LeftShift and Z (< > |), and an L-shaped Enter.
+# The rows stop before Enter; ISO_ENTER draws the two rectangles of the L.
+ISO_MAIN_ROWS: list[list[tuple[str | None, float]]] = [
+    MAIN_ROWS[0],
+    MAIN_ROWS[1],
+    [("Tab", 1.5), ("Q", 1), ("W", 1), ("E", 1), ("R", 1), ("T", 1), ("Y", 1), ("U", 1), ("I", 1), ("O", 1), ("P", 1),
+     ("LeftBracket", 1), ("RightBracket", 1)],
+    [("CapsLock", 1.75), ("A", 1), ("S", 1), ("D", 1), ("F", 1), ("G", 1), ("H", 1), ("J", 1), ("K", 1), ("L", 1),
+     ("Semicolon", 1), ("Apostrophe", 1), ("NonUSHash", 1)],
+    [("LeftShift", 1.25), ("NonUSBackslash", 1), ("Z", 1), ("X", 1), ("C", 1), ("V", 1), ("B", 1), ("N", 1), ("M", 1),
+     ("Comma", 1), ("Dot", 1), ("Slash", 1), ("RightShift", 2.75)],
+    MAIN_ROWS[5],
+]
+
+# The L-shaped ISO Enter: (x, y, w, h) for the upper and the lower rectangle.
+# Both belong to the same zone, so a click anywhere on the L selects the key.
+ISO_ENTER: tuple[tuple[float, float, float, float], ...] = (
+    (13.5, 2.25, 1.5, 1.0),
+    (13.75, 3.25, 1.25, 1.0),
+)
+
 # Main block ends at x=15. Then the navigation block (3 wide) and the numpad
 # (4 wide), each separated by a 0.25-unit gap, as on a standard ANSI board.
 NAV_X = 15.25
@@ -105,6 +127,8 @@ def _nav_and_pad() -> list["KeySpec"]:
         KeySpec("KP1", PAD_X, 4.25, 1), KeySpec("KP2", PAD_X + 1, 4.25, 1), KeySpec("KP3", PAD_X + 2, 4.25, 1),
         KeySpec("KPEnter", PAD_X + 3, 4.25, 1, h=2.0),
         KeySpec("KP0", PAD_X, 5.25, 2), KeySpec("KPDot", PAD_X + 2, 5.25, 1),
+        # TODO(verify): the firmware also reports zone 100 (numpad "=", usage 0x67).
+        # Where that key sits on this board is not measured yet, so it is not drawn.
     ]
     # G1..G5 are a column on the left edge, level with the rows below the F-row.
     for i in range(5):
@@ -131,6 +155,8 @@ class KeyboardLayout:
     decor: list[tuple[str, float, float, float, float]]
     round_keys: frozenset[str]
     extra: tuple[KeySpec, ...] = ()
+    # Rectangles of an L-shaped Enter: (x, y, w, h), all carrying the Enter zone.
+    enter_shape: tuple[tuple[float, float, float, float], ...] = ()
 
 
 TKL = KeyboardLayout("tkl", TKL_ANSI, TOP_ROW, DECOR, frozenset(ROUND))
@@ -149,16 +175,20 @@ FULL_DECOR: list[tuple[str, float, float, float, float]] = [
     ("roller", 22.75, TOP_Y - 0.2, 1.45, 1.05),
 ]
 FULL = KeyboardLayout(
-    "full", MAIN_ROWS, FULL_TOP_ROW, FULL_DECOR,
+    "full", ISO_MAIN_ROWS, FULL_TOP_ROW, FULL_DECOR,
     frozenset({"Brightness", "Previous", "Play/Pause", "Next", "Mute", "G6", "G7", "G8", "G9"}),
     tuple(_nav_and_pad()),
+    enter_shape=ISO_ENTER,
 )
 
 LAYOUTS: dict[str, KeyboardLayout] = {TKL.name: TKL, FULL.name: FULL}
 DEFAULT_LAYOUT = TKL.name
 
+EXTRA_ZONES = {"KPEqual": 100}
+
 LABELS = {
     "Grave": "`", "Minus": "-", "Equal": "=", "LeftBracket": "[", "RightBracket": "]", "Backslash": "\\",
+    "NonUSHash": "#", "NonUSBackslash": "<",
     "Semicolon": ";", "Apostrophe": "'", "Comma": ",", "Dot": ".", "Slash": "/", "Backspace": "⌫", "Enter": "⏎",
     "LeftShift": "Shift", "RightShift": "Shift", "LeftCtrl": "Ctrl", "RightCtrl": "Ctrl", "LeftAlt": "Alt",
     "RightAlt": "AltGr", "LeftMeta": "Super", "RightMeta": "Super", "Menu": "☰", "CapsLock": "Caps",
@@ -201,6 +231,10 @@ def zone_of(name: str) -> int | None:
         return lighting.SPECIAL_ZONES[name]
     if name in keys.KEY_BY_NAME:
         return lighting.zone_for_hid(keys.hid_for(name))
+    # KPEqual is a numpad key the firmware reports but keys.py has no HID usage
+    # for; the zone is the positional formula's value for usage 0x67.
+    if name in EXTRA_ZONES:
+        return EXTRA_ZONES[name]
     return None
 
 
@@ -246,6 +280,15 @@ def keycaps(available_zones: list[int] | None = None, layout: str = DEFAULT_LAYO
             x += width
     for spec in board.extra:
         add(spec.name, spec.x, spec.y, spec.w, spec.h)
+    # The L-shaped Enter is one key drawn as two rectangles, so the click area is
+    # the whole L while the colours and the frame only carry the zone once.
+    for i, (x, y, w, h) in enumerate(board.enter_shape):
+        if i == 0:
+            add("Enter", x, y, w, h)
+        else:
+            zone = zone_of("Enter")
+            if zone is not None and (available_zones is None or zone in available_zones):
+                caps.append(KeyCap("Enter", zone, x, y, w, h))
     return caps
 
 

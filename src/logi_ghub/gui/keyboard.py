@@ -185,6 +185,10 @@ class KeyboardView(Gtk.Widget):
                 continue
             if c.round:
                 self._box(snapshot, x, y, w, h, w / 2, CAP, CAP_EDGE)
+            elif c.name == "Enter" and len(self.caps) > 1 and sum(1 for k in self.caps if k.name == "Enter") > 1:
+                # ISO Enter: one key made of two rectangles. No legend; the shape
+                # may be drawn as several pieces, so the inset is skipped.
+                self._box(snapshot, x, y, w, h, 0.12 * unit, CAP, CAP_EDGE)
             else:
                 self._box(snapshot, x, y, w, h, 0.12 * unit, CAP, CAP_EDGE)
                 inset = 0.07 * unit  # the keycap's top face

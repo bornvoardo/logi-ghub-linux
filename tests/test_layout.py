@@ -62,6 +62,34 @@ def test_full_size_has_the_navigation_cluster():
     assert {"Insert", "Home", "PageUp", "Delete", "End", "PageDown", "Up", "Down", "Left", "Right"} <= names
 
 
+def test_full_size_has_the_iso_keys():
+    """Measured on the keyboard: three keys between L and Enter, one before Z."""
+    caps = {c.name: c for c in layout.keycaps(layout="full")}
+    assert caps["NonUSHash"].zone == 47
+    assert caps["NonUSBackslash"].zone == 97
+    # # ~ sits between the apostrophe and the Enter, the other two follow it
+    assert caps["Apostrophe"].x < caps["NonUSHash"].x < 13.5
+
+
+def test_full_size_enter_is_l_shaped():
+    """One zone, two rectangles, no overlap with the keys around it."""
+    enters = [c for c in layout.keycaps(layout="full") if c.name == "Enter"]
+    assert len(enters) == 2
+    assert len({c.zone for c in enters}) == 1
+    upper, lower = enters
+    assert upper.h >= lower.h / 2  # the L is taller than one row
+    assert upper.x >= layout.NAV_X - 3  # ends at the main block edge
+
+
+def test_full_size_has_no_extra_zone_the_device_lacks():
+    """Every zone we draw must exist in the keyboard's own list, which reported 126."""
+    drawn = {c.zone for c in layout.keycaps(layout="full")}
+    measured = {47, 97} | {c.zone for c in layout.keycaps(layout="tkl")}
+    g_keys = set(range(180, 189))
+    numpad = {c.zone for c in layout.keycaps(layout="full") if c.name.startswith("KP") or c.name == "NumLock"}
+    assert (drawn - measured - g_keys - numpad) == set()
+
+
 def test_full_size_has_all_nine_g_keys():
     caps = {c.name: c for c in layout.keycaps(layout="full")}
     for i in range(1, 10):

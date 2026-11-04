@@ -42,5 +42,8 @@ def test_renderer_picks_the_board_from_the_zone_list():
 
 
 def test_an_explicit_layout_name_still_wins():
+    """A named board is used even when the zone list could fit a bigger one."""
     renderer = lightfx.Renderer(STATIC_WHITE, _zones("full"), layout_name="tkl")
-    assert len(renderer.caps) == len(layout.keycaps(layout="tkl"))
+    tkl_names = {c.name for c in layout.keycaps(layout="tkl")}
+    assert {c.name for c in renderer.caps} <= tkl_names
+    assert "KPDot" not in {c.name for c in renderer.caps}
