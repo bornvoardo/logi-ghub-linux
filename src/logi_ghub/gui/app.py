@@ -14,7 +14,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 
 from .. import __version__, keyremap, keys, lightfx, profiles  # noqa: E402
 from ..actions import Action  # noqa: E402
@@ -528,6 +528,26 @@ class DevicePane(Gtk.Box):
         group2 = Adw.PreferencesGroup()
         group2.add(picker_row)
         box.append(group2)
+
+        # Notifications last, since they are about the rule rather than what it
+        # does. Both are on by default: a switch is worth seeing, and is not an
+        # alarm, so it should not make a sound.
+        ngroup = Adw.PreferencesGroup(
+            title="Notifications",
+            description="Shown when this rule switches the device to its profile.")
+        notify_row = Adw.SwitchRow(title="Notifications",
+                                   subtitle="Show a message when this rule takes effect")
+        notify_row.set_active(rule.notify if editing else True)
+        ngroup.add(notify_row)
+        silent_row = Adw.SwitchRow(title="Silent",
+                                   subtitle="No sound with the message")
+        silent_row.set_active(rule.silent if editing else True)
+        # A silent switch on a rule that says nothing is a setting with no effect.
+        notify_row.bind_property("active", silent_row, "sensitive",
+                                 GObject.BindingFlags.SYNC_CREATE)
+        ngroup.add(silent_row)
+        box.append(ngroup)
+
         d.set_extra_child(box)
         d.add_response("cancel", "Cancel")
         d.add_response("add", "Save" if editing else "Add")
@@ -556,7 +576,8 @@ class DevicePane(Gtk.Box):
             else:
                 old_pos = None
             # Every rule belongs to the device whose page it was made on.
-            rules.add(pattern, profile, dev.key, label=label)
+            rules.add(pattern, profile, dev.key, label=label,
+                      notify=notify_row.get_active(), silent=silent_row.get_active())
             if old_pos is not None:
                 rules.move_to(pattern, dev.key, old_pos)
             rules.save()

@@ -414,7 +414,8 @@ def cmd_apps(args) -> None:
         if not any(p.name == args.profile for p in profiles.list_profiles(key)):
             raise SystemExit(f"no profile {args.profile!r} for {key}; create it first "
                              f"(logi-ghub-cli -d {key} profile keys {args.profile} ...)")
-        rule = rules.add(args.match, args.profile, key, args.title, args.label)
+        rule = rules.add(args.match, args.profile, key, args.title, args.label,
+                         notify=getattr(args, "notify", True), silent=getattr(args, "silent", True))
         print(f"saved {rules.save()}")
         shown = rule.display_name(args.match)
         print(f"  [{rule.device}] {shown} -> {rule.profile}"
@@ -630,6 +631,10 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--profile", required=True, help="profile to run")
     q.add_argument("--title", help="also require this text in the window title")
     q.add_argument("--label", help="a name to show instead of the window class (notification and app)")
+    q.add_argument("--no-notify", dest="notify", action="store_false",
+                   help="do not announce this rule's switch")
+    q.add_argument("--loud", dest="silent", action="store_false",
+                   help="let the notification make a sound (silent by default)")
     q = asp.add_parser("remove", help="drop a rule")
     q.add_argument("match")
     q.add_argument("--device", dest="device_model", help="the rule's device, if it had one")

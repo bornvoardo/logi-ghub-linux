@@ -47,15 +47,15 @@ def test_a_rule_row_can_be_activated_to_edit_it():
 
 def test_switching_a_profile_says_which_device_and_which_profile():
     src = (ROOT / "src" / "logi_ghub" / "daemon.py").read_text()
-    assert "def _announce(self, device_name: str, profile_name: str)" in src
-    assert 'notify(f"{device_name} — {profile_name}")' in src
+    assert "def _announce(self, device_name: str, profile_name: str, device_key: str" in src
+    assert 'notify(f"{device_name} — {profile_name}", silent=silent)' in src
 
 
 def test_the_notification_comes_after_the_profile_applied():
     """A profile that fails to load must not be announced as running."""
     src = (ROOT / "src" / "logi_ghub" / "daemon.py").read_text()
     applied = src.index("session.apply()")
-    announced = src.index("self._announce(dev.name, name)")
+    announced = src.index("self._announce(dev.name, name, dev.key)")
     assert applied < announced
 
 
@@ -67,7 +67,7 @@ def test_the_first_profile_after_start_is_announced_too():
     # The teardown loop must not speak; only a successful start does.
     teardown = scan[:scan.index("for s in self.sessions.values()")]
     assert "_announce" not in teardown
-    assert "self._announce(dev.name, name)" in scan
+    assert "self._announce(dev.name, name, dev.key)" in scan
 
 
 def test_window_watching_starts_even_without_a_rules_file():

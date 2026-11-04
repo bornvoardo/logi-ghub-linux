@@ -95,6 +95,13 @@ class Rule:
     # ("org.kde.konsole", "steam_app_5335510"), so a rule can carry its own label
     # for the notification and the app. Empty means "use the window class".
     label: str | None = None
+    # Whether this rule announces the switch. A rule that flips between two
+    # profiles on a window you alt-tab through all day is the one case where the
+    # message is noise, so it can be turned off per rule.
+    notify: bool = True
+    # No sound with the notification, but still shown. On by default: a profile
+    # switch is a small piece of state, not an alarm.
+    silent: bool = True
 
     def display_name(self, app_id: str) -> str:
         """What the notification and the app call this rule."""
@@ -133,6 +140,10 @@ class AppRules:
                     device=(str(entry["device"]) if entry.get("device") else None),
                     title=(str(entry["title"]) if entry.get("title") else None),
                     label=(str(entry["label"]) if entry.get("label") else None),
+                    # Old files have no such keys; a rule that never mentioned
+                    # notifications should behave like the default one.
+                    notify=bool(entry.get("notify", True)),
+                    silent=bool(entry.get("silent", True)),
                 ))
             except (KeyError, TypeError):
                 log.warning("skipping a malformed rule: %r", entry)
@@ -170,14 +181,14 @@ class AppRules:
 
     # -- editing ---------------------------------------------------------------
     def add(self, match: str, profile: str, device: str | None = None, title: str | None = None,
-            label: str | None = None) -> Rule:
+            label: str | None = None, notify: bool = True, silent: bool = True) -> Rule:
         """Add a rule, or replace one with the same pattern in the same place.
 
         Rules are matched in order and the first match wins, so re-adding an
         existing pattern must not move it to the end: that silently changed which
         rule applied.
         """
-        rule = Rule(match, profile, device, title, label)
+        rule = Rule(match, profile, device, title, label, notify, silent)
         out = []
         replaced = False
         for existing in self.rules:
@@ -292,19 +303,46 @@ def state_path() -> Path:
     return config_dir() / "app-state.json"
 
 
-def save_last_switch(labels: dict[str, str]) -> None:
+def save_last_switch(labels: dict[str, str], notify: dict[str, bool] | None = None,
+                     silent: dict[str, bool] | None = None) -> None:
     """Record which rule label moved each device, for the app to display.
 
     The app cannot know on its own: a window change happens in the daemon, and on
     Wayland the app cannot read the focused window. One small file, written only
     when a switch actually happened, is cheaper than polling KWin.
+
+    The rule's notification settings are stored here too, because the daemon that
+    announces the switch is not the code that picked the rule: it only sees
+    active.json change. Keeping them together means one write, one read.
     """
     try:
         path = state_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"by_app": labels}, indent=2) + "\n")
+        body: dict[str, object] = {"by_app": labels}
+        if notify is not None:
+            body["notify"] = notify
+        if silent is not None:
+            body["silent"] = silent
+        path.write_text(json.dumps(body, indent=2) + "\n")
     except OSError as e:
         log.info("could not save the application state: %s", e)
+
+
+def load_notify_choice(device: str) -> tuple[bool, bool]:
+    """Whether to announce a switch of this device, and whether to do it silently.
+
+    Defaults are yes and silent: a rule that never said anything about
+    notifications behaves like the one the app creates.
+    """
+    try:
+        data = json.loads(state_path().read_text())
+    except (OSError, ValueError):
+        return True, True
+    notify = data.get("notify")
+    silent = data.get("silent")
+    show = notify.get(device, True) if isinstance(notify, dict) else True
+    quiet = silent.get(device, True) if isinstance(silent, dict) else True
+    return bool(show), bool(quiet)
 
 
 def load_last_switch() -> dict[str, str]:
@@ -581,6 +619,8 @@ class Watcher:
             return
         wanted: dict[str, str] = {}
         labels: dict[str, str] = {}
+        announce: dict[str, bool] = {}
+        quiet: dict[str, bool] = {}
         for device in targets:
             rule = self.rules.rule_for(device, app_id, caption)
             name = rule.profile if rule is not None else self.rules.defaults.get(device)
@@ -595,12 +635,17 @@ class Watcher:
             wanted[device] = name
             # The rule's own name, or the window class when it has none.
             labels[device] = rule.display_name(app_id) if rule is not None else app_id
+            # A switch back to the default has no rule of its own; it keeps the
+            # default settings rather than borrowing the last rule's.
+            announce[device] = rule.notify if rule is not None else True
+            quiet[device] = rule.silent if rule is not None else True
         if not wanted:
             return
         for device, name in wanted.items():
             profiles.set_active(device, name)
-        # Remembered so the app can show what is running without asking KWin again.
-        save_last_switch(labels)
+        # Remembered so the app can show what is running without asking KWin again,
+        # and so the daemon knows whether this switch should be announced.
+        save_last_switch(labels, announce, quiet)
         log.info("window %r: switched %s", app_id,
                  ", ".join(f"{d} -> {p}" for d, p in sorted(wanted.items())))
 

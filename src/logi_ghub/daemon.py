@@ -457,7 +457,7 @@ class Daemon:
                 self.sessions[dev.key] = session
                 # Announce only after apply() returned, so a profile that failed to
                 # load is never named as the running one.
-                self._announce(dev.name, name)
+                self._announce(dev.name, name, dev.key)
             except (OSError, HIDPPError, DeviceOffline, TimeoutError, ValueError) as e:
                 log.warning("%s: cannot start profile '%s': %s", dev.name, name, e)
                 dev.close()
@@ -519,16 +519,25 @@ class Daemon:
                 self.sessions.pop(s.dev.key, None)
         self.shutdown()
 
-    def _announce(self, device_name: str, profile_name: str) -> None:
+    def _announce(self, device_name: str, profile_name: str, device_key: str = "") -> None:
         """Say which profile is now running: "device — profile".
 
         Called after the session applied, so the message never names a profile that
         failed to load. Every switch notifies, including the first one after start,
         which is what made the notification look intermittent before.
+
+        A window rule can switch notifications off for itself, and can ask for a
+        silent one; the rule that moved this device recorded its choice when the
+        watcher applied it. Switching back to the default has no rule, so it keeps
+        the defaults: shown, and silent.
         """
+        from . import appwatch
         from .notify import notify
 
-        notify(f"{device_name} — {profile_name}")
+        show, silent = appwatch.load_notify_choice(device_key) if device_key else (True, True)
+        if not show:
+            return
+        notify(f"{device_name} — {profile_name}", silent=silent)
 
     def start_app_watch(self) -> None:
         """Start watching the focused window.
