@@ -40,11 +40,12 @@ TKL_ANSI: list[list[tuple[str | None, float]]] = [
      ("Menu", 1.25), ("RightCtrl", 1.25), (None, 0.25), ("Left", 1), ("Down", 1), ("Right", 1)],
 ]
 
-# The strip above the keys on the G915 X TKL: (name, x, width). Lit ones have a zone; the rest are drawn only.
-TOP_ROW: list[tuple[str, float, float]] = [
-    ("Logo", 0.1, 0.8),
-    ("Brightness", 5.1, 0.8),
-    ("Previous", 12.6, 0.8), ("Play/Pause", 13.6, 0.8), ("Next", 14.6, 0.8), ("Mute", 15.6, 0.8),
+# The strip above the keys on the G915 X TKL: (name, x, y, width). Lit ones have a zone; the rest are drawn only.
+TOP_ROW: list[tuple[str, float, float, float]] = [
+    ("Logo", 0.1, TOP_Y, 0.8),
+    ("Brightness", 5.1, TOP_Y, 0.8),
+    ("Previous", 12.6, TOP_Y, 0.8), ("Play/Pause", 13.6, TOP_Y, 0.8), ("Next", 14.6, TOP_Y, 0.8),
+    ("Mute", 15.6, TOP_Y, 0.8),
 ]
 ROUND = {"Brightness", "Previous", "Play/Pause", "Next", "Mute"}
 # Unlit parts of that strip, for the picture: (kind, x, y, width, height)
@@ -152,7 +153,7 @@ class KeySpec:
 class KeyboardLayout:
     name: str
     rows: list[list[tuple[str | None, float]]]
-    top_row: list[tuple[str, float, float]]
+    top_row: list[tuple[str, float, float, float]]  # (name, x, y, width)
     decor: list[tuple[str, float, float, float, float]]
     round_keys: frozenset[str]
     extra: tuple[KeySpec, ...] = ()
@@ -160,14 +161,17 @@ class KeyboardLayout:
     enter_shape: tuple[tuple[float, float, float, float], ...] = ()
 
 
+# The G915 X TKL: same strip layout, all of it above the F-row.
 TKL = KeyboardLayout("tkl", TKL_ANSI, TOP_ROW, DECOR, frozenset(ROUND))
 
-# Media keys right-aligned over the numpad, G6..G9 in the strip on the left.
-FULL_TOP_ROW: list[tuple[str, float, float]] = [
-    ("Logo", 0.1, 0.8),
-    ("G6", 1.9, 0.8), ("G7", 2.9, 0.8), ("G8", 3.9, 0.8), ("G9", 4.9, 0.8),
-    ("Brightness", 6.4, 0.8),
-    ("Previous", 18.6, 0.8), ("Play/Pause", 19.6, 0.8), ("Next", 20.6, 0.8), ("Mute", 21.6, 0.8),
+# The logo sits over the G1 column on the left edge, G6..G9 follow it in the
+# strip, and the media keys are on the F-row's line at the right end.
+FULL_TOP_ROW: list[tuple[str, float, float, float]] = [
+    ("Logo", GKEY_X + 0.1, TOP_Y, 0.8),
+    ("G6", 1.9, TOP_Y, 0.8), ("G7", 2.9, TOP_Y, 0.8), ("G8", 3.9, TOP_Y, 0.8), ("G9", 4.9, TOP_Y, 0.8),
+    ("Brightness", 6.4, TOP_Y, 0.8),
+    ("Previous", 18.6, 0.1, 0.8), ("Play/Pause", 19.6, 0.1, 0.8), ("Next", 20.6, 0.1, 0.8),
+    ("Mute", 21.6, 0.1, 0.8),
 ]
 FULL_DECOR: list[tuple[str, float, float, float, float]] = [
     ("button", 6.4, TOP_Y, 0.8, 0.8),          # game mode, left of the media keys of the strip
@@ -267,8 +271,8 @@ def keycaps(available_zones: list[int] | None = None, layout: str = DEFAULT_LAYO
         if zone is not None and (available_zones is None or zone in available_zones):
             caps.append(KeyCap(name, zone, x, y, w, h, name in board.round_keys))
 
-    for name, x, w in board.top_row:
-        add(name, x, TOP_Y, w, w)
+    for name, x, y, w in board.top_row:
+        add(name, x, y, w, w)
     for r, row in enumerate(board.rows):
         y = r + (0.25 if r else 0)  # small gap under the F-row
         x = 0.0
