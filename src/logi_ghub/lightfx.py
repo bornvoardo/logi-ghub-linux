@@ -216,13 +216,13 @@ class Animator(threading.Thread):
 
     def run(self) -> None:
         pk = self.dev.per_key
-        zones = set(pk.zones)
+        zones = list(pk.zones)
         start = time.monotonic()
         failures = 0
         while not self.stop_event.is_set():
             t0 = time.monotonic()
             if not self.paused.is_set():
-                frame = {z: c for z, c in self.renderer.frame(t0 - start).items() if z in zones}
+                frame = _widen({z: c for z, c in self.renderer.frame(t0 - start).items()}, zones)
                 frame = _quantize(frame, self.quant_bits)
                 changed = {z: c for z, c in frame.items() if self.last.get(z) != c}
                 if changed:
@@ -245,16 +245,26 @@ class Animator(threading.Thread):
         self.stop_event.set()
 
 
-def apply(dev, light: dict, *, claim: bool = True, layout_name: str = layout.DEFAULT_LAYOUT) -> Animator | None:
-    """Apply a lighting dict to ``dev``. Returns the running animator for colour sequences."""
+def apply(dev, light: dict, *, claim: bool = True, layout_name: str | None = None) -> Animator | None:
+    """Apply a lighting dict to ``dev``. Returns the running animator for colour sequences.
+
+    ``layout_name`` defaults to None so the board is worked out from the device's
+    own zone list. Forcing a board here is how the numpad and the G-keys went dark:
+    a frame built for the smaller board leaves their zones out, and the keyboard
+    turns off every zone the frame does not mention.
+    """
     rgb, pk = dev.rgb, dev.per_key
     if rgb is None:
         return None
+    # Everything that can raise is done before the keyboard is touched. The old
+    # order cleared the whole board first and built the frame afterwards, so an
+    # error in between left every LED off.
+    renderer = Renderer(light, pk.zones if pk else None, len(rgb.zones), layout_name)
+    frame = _whole_board(renderer, pk)
     if claim:
         rgb.claim()
     if dev.brightness and light.get("brightness") is not None:
         dev.brightness.set(int(light["brightness"]))
-    renderer = Renderer(light, pk.zones if pk else None, len(rgb.zones), layout_name)
     if renderer.animation and pk:
         rgb.hold_static()  # per-key frames show only while the firmware effect is Static
         anim = Animator(dev, renderer)
@@ -268,10 +278,38 @@ def apply(dev, light: dict, *, claim: bool = True, layout_name: str = layout.DEF
             log.warning("zone %s: %s", z, e)
     if pk and light.get("keys"):
         rgb.hold_static(skip={int(z) for z in light.get("zones") or {}})
-        frame = renderer.frame(0.0)
-        pk.set_colors({z: c for z, c in frame.items() if z in pk.zones})
+        pk.set_colors(frame)
     record_applied(dev, light)
     return None
+
+
+def _widen(frame: dict[int, int], zones) -> dict[int, int]:
+    """Give every zone the keyboard reports a colour.
+
+    The keyboard switches off any zone a per-key frame leaves out, so a frame
+    built from a smaller board (or from a profile that paints a few keys) would
+    darken the rest. Zones the picture does not draw take the colour of the
+    nearest painted key instead of going black.
+    """
+    missing = [z for z in zones if z not in frame]
+    if not missing:
+        return frame
+    fallback = next((c for c in frame.values() if c), 0xFFFFFF)
+    out = dict(frame)
+    for z in missing:
+        out[z] = fallback
+    return out
+
+
+def _whole_board(renderer: "Renderer", pk) -> dict[int, int]:
+    """One frame, widened to every zone the keyboard reports."""
+    frame = renderer.frame(0.0)
+    if pk is None or not pk.zones:
+        return frame
+    widened = _widen(frame, pk.zones)
+    if len(widened) != len(frame):
+        log.debug("frame widened with %d zone(s) the picture does not draw", len(widened) - len(frame))
+    return widened
 
 
 # What this program last put on each device, so the app can show it again later.
