@@ -43,11 +43,16 @@ PANIC = frozenset({KEY_BACKSPACE, KEY_ESC, KEY_ENTER})
 # Keys of the G915 X's media row, by the names the on-screen keyboard uses.
 MEDIA_KEYS = {"Mute": "Mute", "Play/Pause": "Play/Pause", "Previous": "Previous track", "Next": "Next track"}
 
+# The G-keys reach the computer as plain function keys: G1..G9 are F13..F21
+# (evdev codes 183..191). Nothing about them is proprietary on the host side,
+# so a profile assigns them by name and the daemon grabs the keycode.
+G_KEYS = {f"G{i}": f"F{i + 12}" for i in range(1, 10)}
+
 
 # --- key names ---------------------------------------------------------------------
 def key_code(name: str) -> int:
-    """evdev code for a key name: keys.KEY_NAMES, a media key (keys.CONSUMER_NAMES) or ``code:N``."""
-    name = MEDIA_KEYS.get(name, name)
+    """evdev code for a key name: keys.KEY_NAMES, a G-key, a media key (keys.CONSUMER_NAMES) or ``code:N``."""
+    name = G_KEYS.get(name, MEDIA_KEYS.get(name, name))
     if name in keys.KEY_BY_NAME:
         return keys.KEY_BY_NAME[name][1]
     if name in keys.CONSUMER_BY_NAME:
