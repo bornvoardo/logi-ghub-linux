@@ -653,6 +653,12 @@ class DevicePane(Gtk.Box):
     def remaps_keys(self) -> bool:
         return bool(self.profile) and self.dev.kind == "keyboard" and self.dev.hidpp is not None and not self.dev.binding_count()
 
+    def keyboard_layout(self) -> str:
+        """Which keyboard picture to draw: the numpad zones the device reports decide it."""
+        from .. import layout
+
+        return layout.detect_layout(self.dev.per_key.zones if self.dev.per_key else None)
+
     def build_keys(self):
         p = self.profile
         self.stack.get_page(self.pages["buttons"]).set_visible(True)
@@ -661,7 +667,8 @@ class DevicePane(Gtk.Box):
             description="Click a key to change what it does. Key assignments are run by the logi-ghubd service: turn on "
                         "Host mode for this profile on the Profiles page. Holding Backspace + Esc + Enter together always "
                         "gives you the normal keyboard back."))
-        view = KeyboardView(self.dev.per_key.zones if self.dev.per_key else None, None)
+        view = KeyboardView(self.dev.per_key.zones if self.dev.per_key else None, None,
+                            self.keyboard_layout())
         view.paint_on_drag = False
         names = {zone: cap.name for zone, cap in view.buttons.items()}
         view.set_colors({zone: 0x3584E4 for zone, name in names.items() if name in p.key_actions})
@@ -1059,7 +1066,8 @@ class DevicePane(Gtk.Box):
         """Draw a stored effect in the on-screen keyboard without touching the device."""
         self._stop_preview()
         self.renderer = lightfx.Renderer(light, self.dev.per_key.zones if self.dev.per_key else None,
-                                         len(self.dev.rgb.zones) if self.dev.rgb else 1)
+                                         len(self.dev.rgb.zones) if self.dev.rgb else 1,
+                                         self.keyboard_layout())
         self._t0 = GLib.get_monotonic_time() / 1e6
 
         def tick():
@@ -1085,7 +1093,8 @@ class DevicePane(Gtk.Box):
         box.append(clear)
         if self.dev.per_key:
             g.set_header_suffix(box)
-        self.kb_view = KeyboardView(self.dev.per_key.zones if self.dev.per_key else None, None)
+        self.kb_view = KeyboardView(self.dev.per_key.zones if self.dev.per_key else None, None,
+                                 self.keyboard_layout())
         painted = p.lighting.setdefault("keys", {})
 
         def ensure_static_base():
@@ -1251,7 +1260,8 @@ class DevicePane(Gtk.Box):
         if not getattr(self, "kb_view", None):
             return
         self.renderer = lightfx.Renderer(self.profile.lighting, self.dev.per_key.zones if self.dev.per_key else None,
-                                         len(self.dev.rgb.zones) if self.dev.rgb else 1)
+                                         len(self.dev.rgb.zones) if self.dev.rgb else 1,
+                                         self.keyboard_layout())
         self._t0 = GLib.get_monotonic_time() / 1e6
         if self.light_state == "onboard" and not self.dirty:
             self.kb_view.set_colors(self.renderer.frame(0.0))

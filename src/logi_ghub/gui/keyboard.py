@@ -39,14 +39,15 @@ class KeyboardView(Gtk.Widget):
     GAP = 0.08  # gap between keys, in key units
     PAD = 0.35  # plate border around the keys, in key units
 
-    def __init__(self, available_zones: list[int] | None, on_paint):
+    def __init__(self, available_zones: list[int] | None, on_paint, layout_name: str = layout.DEFAULT_LAYOUT):
         super().__init__()
         self.on_paint = on_paint
         self.paint_on_drag = True  # False: one call per click (for picking a key rather than painting)
-        self.caps = layout.keycaps(available_zones)
+        self.layout = layout.get_layout(layout_name)
+        self.caps = layout.keycaps(available_zones, self.layout.name)
         self.buttons = {c.zone: c for c in self.caps}  # zones shown
         self.colors: dict[int, int] = {}
-        x0, y0, x1, y1 = layout.bounds(self.caps, decor=True)
+        x0, y0, x1, y1 = layout.bounds(self.caps, decor=True, layout=self.layout.name)
         self.x0, self.y0, self.x1, self.y1 = x0 - self.PAD, y0 - self.PAD, x1 + self.PAD, y1 + self.PAD
         self.set_hexpand(True)
         self._last_painted: int | None = None
@@ -160,7 +161,7 @@ class KeyboardView(Gtk.Widget):
         self._box(snapshot, px(self.x0), py(self.y0), (self.x1 - self.x0) * unit, (self.y1 - self.y0) * unit,
                   0.3 * unit, BODY, BODY_EDGE)
         small = Pango.FontDescription.from_string(f"Sans Bold {max(5, int(unit * 0.14))}")
-        for kind, kx, ky, kw, kh in layout.DECOR:
+        for kind, kx, ky, kw, kh in self.layout.decor:
             x, y, w, h = px(kx), py(ky), kw * unit, kh * unit
             if kind == "button":
                 self._box(snapshot, x, y, w, h, w / 2, CAP, CAP_EDGE)

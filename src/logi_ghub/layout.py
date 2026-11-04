@@ -209,6 +209,22 @@ def get_layout(name: str | None) -> KeyboardLayout:
     return LAYOUTS.get(name or "", LAYOUTS[DEFAULT_LAYOUT])
 
 
+# Zones that only a full-size board has. A keyboard that reports any of these
+# gets the full-size picture; this needs no model table and cannot be wrong
+# about a board whose product id is unknown.
+NUMPAD_KEYS = ("NumLock", "KPSlash", "KPAsterisk", "KPMinus", "KPPlus", "KPEnter",
+               "KP0", "KP1", "KP2", "KP3", "KP4", "KP5", "KP6", "KP7", "KP8", "KP9", "KPDot")
+
+
+def detect_layout(available_zones: list[int] | None) -> str:
+    """``"full"`` when the device reports numpad lighting zones, else the default."""
+    if not available_zones:
+        return DEFAULT_LAYOUT
+    present = set(available_zones)
+    numpad = {z for z in (zone_of(n) for n in NUMPAD_KEYS) if z is not None}
+    return FULL.name if numpad & present else DEFAULT_LAYOUT
+
+
 def keycaps(available_zones: list[int] | None = None, layout: str = DEFAULT_LAYOUT) -> list[KeyCap]:
     """Key positions, with the logo and media buttons in the strip above the function row like on the keyboard."""
     board = get_layout(layout)

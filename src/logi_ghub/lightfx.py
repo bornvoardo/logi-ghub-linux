@@ -85,12 +85,13 @@ def sequence_color(colors: list[int], phase: float, fade: bool) -> int:
 class Renderer:
     """Computes the colour of every key at a point in time."""
 
-    def __init__(self, light: dict, zones: list[int] | None = None, clusters: int = 2):
+    def __init__(self, light: dict, zones: list[int] | None = None, clusters: int = 2,
+                 layout_name: str = layout.DEFAULT_LAYOUT):
         self.light = light or {}
-        self.caps = layout.keycaps(zones)
-        x0, y0, x1, y1 = layout.bounds(self.caps) if self.caps else (0, 0, 1, 1)
+        self.caps = layout.keycaps(zones, layout_name)
+        x0, y0, x1, y1 = layout.bounds(self.caps, layout=layout_name) if self.caps else (0, 0, 1, 1)
         main = [c for c in self.caps if c.y >= 0] or self.caps
-        mx0, my0, mx1, my1 = layout.bounds(main) if main else (0, 0, 1, 1)
+        mx0, my0, mx1, my1 = layout.bounds(main, layout=layout_name) if main else (0, 0, 1, 1)
         self.pos: dict[int, tuple[float, float]] = {}
         for c in self.caps:
             fx = (c.cx - mx0) / max(1e-6, mx1 - mx0)
