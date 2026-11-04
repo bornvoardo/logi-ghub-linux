@@ -1,4 +1,4 @@
-// logi-ghub-linux: tell the daemon which window has focus.
+// logi-ghub-linux: tell the daemon which window has focus, and which windows exist.
 //
 // Wayland does not let a normal program read the focused window, but a KWin script
 // can. This one lives in KWin's scripting engine for as long as the session lasts:
@@ -12,8 +12,37 @@ const SERVICE = 'org.logi_ghub.Focus';
 const PATH = '/Focus';
 const IFACE = 'org.logi_ghub.Focus';
 
+// The app's window picker needs the windows that are open now. A KWin script
+// cannot answer a D-Bus call, so the list is pushed with every focus change and the
+// daemon keeps the last one; the app reads it from there.
+// Fields are separated by \u0001 and windows by \u0002; neither can appear in a
+// window class or a caption.
+function reportWindows() {
+    const out = [];
+    const seen = {};
+    const list = workspace.windowList ? workspace.windowList() : [];
+    for (let i = 0; i < list.length; i++) {
+        const w = list[i];
+        if (!w) continue;
+        let cls = '';
+        try { cls = w.resourceClass ? String(w.resourceClass) : ''; } catch (e) {}
+        if (!cls) { try { cls = w.windowClass ? String(w.windowClass) : ''; } catch (e) {} }
+        if (!cls) continue;
+        let desktop = '';
+        try { desktop = w.desktopFileName ? String(w.desktopFileName) : ''; } catch (e) {}
+        let caption = '';
+        try { caption = w.caption ? String(w.caption) : ''; } catch (e) {}
+        const key = cls + '\u0000' + caption;
+        if (seen[key]) continue;
+        seen[key] = true;
+        out.push(cls + '\u0001' + caption + '\u0001' + desktop);
+    }
+    callDBus(SERVICE, PATH, IFACE, 'windowsReported', out.join('\u0002'));
+}
+
 function send() {
     const w = workspace.activeWindow;
+    reportWindows();
     if (!w) {
         callDBus(SERVICE, PATH, IFACE, 'focusLost');
         return;

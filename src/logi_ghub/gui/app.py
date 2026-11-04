@@ -411,6 +411,56 @@ class DevicePane(Gtk.Box):
         rules.save()
         self.build_profiles()
 
+    def _pick_window(self, entry):
+        """List the open windows and put the chosen class into the entry."""
+        from .. import appwatch
+
+        windows = appwatch.load_windows()
+        d = Adw.AlertDialog(heading="Pick a window",
+                            body="The list is the one logi-ghubd last received from KWin. "
+                                 "Switch to a window and reopen this dialog if an application is missing.")
+        if not windows:
+            d.set_extra_child(Adw.ActionRow(
+                title="No windows reported yet",
+                subtitle="The logi-ghubd service must be running and the session must be KDE."))
+            d.add_response("close", "Close")
+            d.connect("response", lambda *_: None)
+            d.present(self.win)
+            return
+
+        # One row per window; duplicates of the same class are worth keeping,
+        # because the caption is what tells two windows of one application apart.
+        group = Adw.PreferencesGroup()
+        rows = []
+        for w in windows:
+            app_id = w.get("app_id") or w.get("class", "")
+            row = Adw.ActionRow(title=GLib.markup_escape_text(app_id),
+                                subtitle=GLib.markup_escape_text(w.get("title", "")),
+                                activatable=True)
+            rows.append((row, app_id))
+            group.add(row)
+
+        listbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_min_content_height(min(360, 60 * max(1, len(rows))))
+        scroller.set_child(group)
+        listbox.append(scroller)
+        d.set_extra_child(listbox)
+        d.add_response("cancel", "Cancel")
+
+        def chosen(row):
+            app_id = dict((id(r), a) for r, a in rows).get(id(row))
+            if app_id:
+                entry.set_text(app_id)
+            d.close()
+
+        for row, _app in rows:
+            row.connect("activated", chosen)
+
+        d.connect("response", lambda *_: None)
+        d.present(self.win)
+
     def _add_app_rule(self, names: list[str], rule=None):
         """Add a window binding, or edit ``rule`` when one is given."""
         from .. import appwatch
@@ -428,6 +478,14 @@ class DevicePane(Gtk.Box):
         if editing:
             match.set_text(rule.match)
         group.add(match)
+
+        pick_row = Adw.ActionRow(title="Pick a window",
+                                 subtitle="List the windows that are open now and copy the class")
+        pick = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
+        pick.connect("clicked", lambda *_: self._pick_window(match))
+        pick_row.add_suffix(pick)
+        pick_row.set_activatable_widget(pick)
+        group.add(pick_row)
         box.append(group)
         # A ComboRow only expands inside a preferences group as well, so the profile
         # picker is a DropDown: it opens on a click anywhere on it.

@@ -66,6 +66,9 @@ SERVICE_XML = f"""
       <arg type="s" direction="in" name="desktopFileName"/>
     </method>
     <method name="focusLost"/>
+    <method name="windowsReported">
+      <arg type="s" direction="in" name="windows"/>
+    </method>
   </interface>
 </node>
 """
@@ -217,6 +220,53 @@ def rules_path() -> Path:
     from .config import config_dir
 
     return config_dir() / "app-profiles.json"
+
+
+# -- the window list the app's picker shows ------------------------------------
+
+SEP_FIELD = "\x01"
+SEP_WINDOW = "\x02"
+
+
+def windows_path() -> Path:
+    from .config import config_dir
+
+    return config_dir() / "windows.json"
+
+
+def parse_windows(blob: str) -> list[dict]:
+    """Split the string the KWin script sends into one record per window."""
+    out = []
+    for chunk in (blob or "").split(SEP_WINDOW):
+        if not chunk:
+            continue
+        cls, _, rest = chunk.partition(SEP_FIELD)
+        caption, _, desktop = rest.partition(SEP_FIELD)
+        out.append({"class": cls, "title": caption, "desktop": desktop,
+                    "app_id": resolve_app_id(cls, desktop)})
+    return out
+
+
+def save_windows(blob: str) -> list[dict]:
+    """Keep the last list KWin sent, for the app to read without asking KWin."""
+    windows = parse_windows(blob)
+    try:
+        path = windows_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"windows": windows}, indent=2) + "\n")
+    except OSError as e:
+        log.info("could not save the window list: %s", e)
+    return windows
+
+
+def load_windows() -> list[dict]:
+    """The last window list the daemon saved, or an empty list."""
+    try:
+        data = json.loads(windows_path().read_text())
+    except (OSError, ValueError):
+        return []
+    windows = data.get("windows")
+    return windows if isinstance(windows, list) else []
 
 
 # -- app identity --------------------------------------------------------------
@@ -426,6 +476,9 @@ class Watcher:
         if method == "focusChanged":
             resource_class, caption, desktop_name = params.unpack()
             self.focus_changed(resource_class, caption, desktop_name)
+        elif method == "windowsReported":
+            (blob,) = params.unpack()
+            save_windows(blob)
         elif method == "focusLost":
             self.focus_changed("", "", "")
         return None
