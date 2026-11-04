@@ -171,8 +171,6 @@ FULL_TOP_ROW: list[tuple[str, float, float]] = [
 ]
 FULL_DECOR: list[tuple[str, float, float, float, float]] = [
     ("button", 6.4, TOP_Y, 0.8, 0.8),          # game mode, left of the media keys of the strip
-    ("badge", 8.0, TOP_Y - 0.05, 2.2, 0.9),
-    ("button", 10.6, TOP_Y, 0.8, 0.8), ("button", 11.6, TOP_Y, 0.8, 0.8), ("button", 12.6, TOP_Y, 0.8, 0.8),
     ("roller", 22.75, TOP_Y - 0.2, 1.45, 1.05),
 ]
 FULL = KeyboardLayout(
@@ -188,11 +186,11 @@ DEFAULT_LAYOUT = TKL.name
 EXTRA_ZONES = {"KPEqual": 100}
 
 LABELS = {
-    "Grave": "`", "Minus": "-", "Equal": "=", "LeftBracket": "[", "RightBracket": "]", "Backslash": "\\",
-    "NonUSHash": "#", "NonUSBackslash": "<",
-    "Semicolon": ";", "Apostrophe": "'", "Comma": ",", "Dot": ".", "Slash": "/", "Backspace": "⌫", "Enter": "⏎",
+    "Grave": "`~", "Minus": "-", "Equal": "=+", "LeftBracket": "[{", "RightBracket": "]}", "Backslash": "\\",
+    "NonUSHash": "\\|", "NonUSBackslash": "<",
+    "Semicolon": ";:", "Apostrophe": "'\"", "Comma": ",<", "Dot": ".>", "Slash": "/?", "Backspace": "⌫", "Enter": "⏎",
     "LeftShift": "Shift", "RightShift": "Shift", "LeftCtrl": "Ctrl", "RightCtrl": "Ctrl", "LeftAlt": "Alt",
-    "RightAlt": "AltGr", "LeftMeta": "Super", "RightMeta": "Super", "Menu": "☰", "CapsLock": "Caps",
+    "RightAlt": "AltGr", "LeftMeta": "Super", "RightMeta": "FN", "Menu": "☰", "CapsLock": "Caps",
     "PrintScreen": "PrtSc", "ScrollLock": "ScrLk", "PageUp": "PgUp", "PageDown": "PgDn", "Delete": "Del",
     "Insert": "Ins", "Up": "↑", "Down": "↓", "Left": "←", "Right": "→", "Space": "", "Brightness": "☀",
     "Previous": "⏮", "Next": "⏭", "Mute": "×", "Play/Pause": "⏯", "Pause": "Pause", "Logo": "G",
