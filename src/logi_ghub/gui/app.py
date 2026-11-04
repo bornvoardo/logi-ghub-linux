@@ -756,6 +756,48 @@ class DevicePane(Gtk.Box):
         d.connect("response", resp)
         d.present(self.win)
 
+    def watch_active_changes(self) -> bool:
+        """Redraw the profile list when something else switches a profile.
+
+        A window rule is applied by logi-ghubd, not here, so the list kept showing
+        whatever was active when the page was last built. Watching active.json is
+        the cheapest way to follow it: GIO reports a change, this redraws only the
+        profile rows, and nothing polls.
+
+        Only while the Profiles page is on screen and nothing is being edited:
+        redrawing under an open dialog would drop what the user typed.
+        """
+        try:
+            path = profiles._active_path()
+            if self._active_monitor is None:
+                # The file may not exist yet; watch the directory so creating it counts.
+                target = path if path.exists() else path.parent
+                self._active_monitor = Gio.File.new_for_path(str(target)).monitor_file(
+                    Gio.FileMonitorFlags.NONE, None)
+                self._active_monitor.connect("changed", self._on_active_changed)
+        except (GLib.Error, OSError) as e:
+            # A missing monitor only means the list is not live; the page still works.
+            self._active_monitor = None
+            return False
+        return True
+
+    def _on_active_changed(self, *_args):
+        if self.current_pane is None or self.current_pane.dirty:
+            return
+        if self.stack.get_visible_child_name() != "profiles":
+            return
+        if self._pending_redraw:
+            return
+        # Coalesce: a switch writes active.json and app-state.json together.
+        self._pending_redraw = GLib.timeout_add(150, self._redraw_profiles)
+
+    def _redraw_profiles(self) -> bool:
+        self._pending_redraw = 0
+        pane = self.current_pane
+        if pane is not None and not pane.dirty and self.stack.get_visible_child_name() == "profiles":
+            pane.build_profiles()
+        return False
+
     def backup_now(self):
         run_async(lambda: ob.save_backup(self.dev.onboard, self.dev.key), lambda p: self.toast(f"Backup saved: {p.name}"), self.fail)
 
@@ -1751,57 +1793,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.rows: dict[int, Adw.ActionRow] = {}
         self.current_pane: DevicePane | None = None
         self.current_row: Adw.ActionRow | None = None
-        self._active_monitor = None
-        self._pending_redraw = 0
         self.connect("close-request", self._on_close_request)
         self.scan()
         if not fake:
             GLib.timeout_add_seconds(10, self.wake_check)
             self.watch_active_changes()
-
-    def watch_active_changes(self) -> bool:
-        """Redraw the profile list when something else switches a profile.
-
-        A window rule is applied by logi-ghubd, not here, so the list kept showing
-        whatever was active when the page was last built. Watching active.json is
-        the cheapest way to follow it: GIO reports a change, this redraws only the
-        profile rows, and nothing polls.
-
-        This lives here, not on DevicePane: the pane does not know whether it is the
-        one on screen, and the window owns that.
-        """
-        try:
-            path = profiles._active_path()
-            # The file may not exist yet; watch the directory so creating it counts.
-            target = path if path.exists() else path.parent
-            if self._active_monitor is not None:
-                self._active_monitor.cancel()
-            self._active_monitor = Gio.File.new_for_path(str(target)).monitor_file(
-                Gio.FileMonitorFlags.NONE, None)
-            self._active_monitor.connect("changed", self._on_active_changed)
-        except (GLib.Error, OSError):
-            # A missing monitor only means the list is not live; the page still works.
-            self._active_monitor = None
-            return False
-        return True
-
-    def _on_active_changed(self, *_args):
-        pane = self.current_pane
-        if pane is None or pane.dirty:
-            return
-        if pane.stack.get_visible_child_name() != "profiles":
-            return
-        if self._pending_redraw:
-            return
-        # Coalesce: a switch writes active.json and app-state.json together.
-        self._pending_redraw = GLib.timeout_add(150, self._redraw_profiles)
-
-    def _redraw_profiles(self) -> bool:
-        self._pending_redraw = 0
-        pane = self.current_pane
-        if pane is not None and not pane.dirty and pane.stack.get_visible_child_name() == "profiles":
-            pane.build_profiles()
-        return False
 
     def _on_close_request(self, *_args) -> bool:
         """Block the window from closing while a pane has unsaved edits."""
