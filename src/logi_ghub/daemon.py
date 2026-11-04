@@ -378,11 +378,20 @@ class Session:
             self.vinput.wheel(-1 if f in (0x01, 0x10) else 1, horizontal)
 
 
-def _profile_mtime(model_key: str, name: str) -> float:
+def _file_mtime(path) -> int:
     try:
-        return os.stat(profiles.profile_dir(model_key) / f"{profiles._slug(name)}.json").st_mtime
+        return os.stat(path).st_mtime_ns
     except OSError:
-        return 0.0
+        return 0
+
+
+def _profile_mtime(model_key: str, name: str) -> int:
+    try:
+        # Nanoseconds: two saves within the same second must still differ, or the
+        # daemon keeps running the older assignments until the fallback scan.
+        return os.stat(profiles.profile_dir(model_key) / f"{profiles._slug(name)}.json").st_mtime_ns
+    except OSError:
+        return 0
 
 
 class Daemon:
@@ -397,7 +406,7 @@ class Daemon:
             log.warning("no virtual input device (%s); key actions and macros will not work", e)
             self.vinput = None
         self.runner = MacroRunner(self.vinput)
-        self._active_mtime = 0.0
+        self._active_mtime = 0
         self._last_scan = 0.0
 
     def _devices(self) -> list[LogiDevice]:
@@ -453,14 +462,27 @@ class Daemon:
             s.dev.close()
             log.info("%s: released", s.dev.name)
 
+    def _watched_mtime(self, active: dict) -> int:
+        """A value that changes whenever active.json or any running profile changes.
+
+        The daemon used to watch active.json alone, so pressing Save in the app
+        wrote the profile but the running session kept the old assignments until
+        the ten-second fallback scan. Mixing the profile files in makes the change
+        visible on the next loop, about a second later.
+        """
+        value = _file_mtime(profiles._active_path())
+        for key, name in active.items():
+            value = max(value, _profile_mtime(key, name))
+        return value
+
     def run(self) -> None:
         log.info("logi-ghubd started")
         while not self.stop.is_set():
             now = time.monotonic()
             try:
-                mtime = os.stat(profiles._active_path()).st_mtime
-            except OSError:
-                mtime = 0.0
+                mtime = self._watched_mtime(profiles.get_active())
+            except (OSError, ValueError):
+                mtime = 0
             if mtime != self._active_mtime or now - self._last_scan > 10:
                 self._active_mtime = mtime
                 self._last_scan = now
