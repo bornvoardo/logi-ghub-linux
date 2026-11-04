@@ -235,6 +235,25 @@ def _startup_wm_class(path: Path) -> str | None:
 
 # -- the watcher ---------------------------------------------------------------
 
+# The KWin Scripting methods and the arguments they take. GLib needs plain values
+# here: building GLib.Variant objects first and handing the tuple to another
+# GLib.Variant raises "Must be string, not Variant".
+KWIN_ARGS = {
+    # method: (argument names, argument signature, reply signature)
+    "loadScript": (("path", "plugin"), "ss", "i"),
+    "unloadScript": (("plugin",), "s", ""),
+    "start": ((), "", ""),
+    "isScriptLoaded": (("plugin",), "s", "b"),
+}
+
+
+def _kwin_args(method: str, kwargs: dict) -> tuple[str, tuple, str]:
+    """The argument signature, the plain values and the reply signature."""
+    names, types, reply = KWIN_ARGS.get(method, ((), "", ""))
+    values = tuple(kwargs[n] for n in names if n in kwargs)
+    return f"({types[:len(values)]})", values, f"({reply})"
+
+
 class Watcher:
     """Owns the D-Bus service the KWin script calls, and applies the rules."""
 
@@ -337,14 +356,12 @@ class Watcher:
     def _kwin(self, method: str, **kwargs):
         """Call a method of org.kde.kwin.Scripting, returning its first reply value."""
         Gio, GLib = self._Gio, self._GLib
-        args = []
-        for name, value in kwargs.items():
-            args.append(GLib.Variant("s", value) if name in ("path", "plugin") else GLib.Variant("i", value))
+        signature, values, reply_sig = _kwin_args(method, kwargs)
         try:
             reply = self._bus.call_sync(
                 "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting", method,
-                GLib.Variant(f"({'s' * len(args)})", tuple(args)) if args else None,
-                GLib.VariantType.new("(i)" if method == "loadScript" else "()"),
+                GLib.Variant(signature, values) if values else None,
+                GLib.VariantType.new(reply_sig),
                 Gio.DBusCallFlags.NONE, 3000, None)
         except GLib.Error as e:
             log.info("KWin scripting refused %s: %s", method, e.message)
