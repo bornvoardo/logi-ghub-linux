@@ -655,30 +655,40 @@ class DevicePane(Gtk.Box):
                                  else "Run this profile on the device")
                 use.connect("clicked", lambda _b, n=prof.name: self.set_host(n))
                 row.add_suffix(use)
-            menu = Gio.Menu()
-            for p in self.slots:
-                menu.append(f"Write to on-board slot {p.sector}", f"pane.write-slot::{prof.name}\x1f{p.sector}")
             if locked:
-                # The default is not a rule, so it has no row of its own in the
-                # rules list; its two notification answers live here instead.
+                # The default is not a rule, so it has no row in the rules list; its
+                # two notification answers live here. A menu entry needs an action to
+                # fire, and these two never did; check buttons carry their own signal
+                # and cannot be refused.
                 from .. import appwatch as _aw
                 _rules = _aw.AppRules.load()
-                _on = _rules.default_notify.get(self.dev.key, True)
-                _quiet = _rules.default_silent.get(self.dev.key, True)
-                menu.append(f"Notify on switch: {'on' if _on else 'off'}",
-                            f"pane.set-default-choice::notify\x1f{0 if _on else 1}")
-                menu.append(f"Silent: {'on' if _quiet else 'off'}",
-                            f"pane.set-default-choice::silent\x1f{0 if _quiet else 1}")
-            if not locked:
+                notify_box = Gtk.CheckButton(label="Notify on switch")
+                notify_box.set_active(_rules.default_notify.get(self.dev.key, True))
+                notify_box.connect("toggled", lambda b: self._set_default_choice(
+                    "notify", "1" if b.get_active() else "0"))
+                silent_box = Gtk.CheckButton(label="Silent")
+                silent_box.set_active(_rules.default_silent.get(self.dev.key, True))
+                silent_box.connect("toggled", lambda b: self._set_default_choice(
+                    "silent", "1" if b.get_active() else "0"))
+                inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
+                                margin_top=10, margin_bottom=10, margin_start=12, margin_end=12)
+                inner.append(notify_box)
+                inner.append(silent_box)
+                pop = Gtk.Popover()
+                pop.set_child(inner)
+                row.add_suffix(Gtk.MenuButton(icon_name="view-more-symbolic", valign=Gtk.Align.CENTER,
+                                              popover=pop))
+            else:
+                menu = Gio.Menu()
+                for p in self.slots:
+                    menu.append(f"Write to on-board slot {p.sector}", f"pane.write-slot::{prof.name}\x1f{p.sector}")
                 # The default profile is the device's fallback: deleting it would
-                # leave nothing to fall back to, so the entry is not offered.
+                # leave nothing to fall back to, so the entry is not offered there.
                 menu.append("Delete", f"pane.delete-profile::{prof.name}")
-            # A keyboard has no on-board slots, so for its default profile every
-            # entry is withheld and the button would open an empty menu. Hide it
-            # instead of showing a button that does nothing.
-            if menu.get_n_items():
-                mb = Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=menu, valign=Gtk.Align.CENTER)
-                row.add_suffix(mb)
+                if menu.get_n_items():
+                    mb = Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=menu,
+                                        valign=Gtk.Align.CENTER)
+                    row.add_suffix(mb)
             e = Gtk.Button(label="Edit", valign=Gtk.Align.CENTER, sensitive=self.target != ("computer", prof.name))
             e.connect("clicked", lambda _b, pr=prof: self.switch_target(lambda: self.edit_computer(pr)))
             row.add_suffix(e)
