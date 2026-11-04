@@ -87,4 +87,4 @@ def test_a_device_runs_one_profile_so_the_picker_is_a_button():
     src = (ROOT / "src" / "logi_ghub" / "gui" / "app.py").read_text()
     body = src[src.index('title="Profiles on this computer"'):src.index("def set_host")]
     assert "Gtk.Switch" not in body
-    assert 'label="Running" if running else "Use"' in body
+    assert 'label="Selected" if running else "Use"' in body

@@ -645,15 +645,17 @@ class DevicePane(Gtk.Box):
                 # the user did not press Use, so a bare check mark looks wrong.
                 by_app = appwatch.load_last_switch().get(dev.key)
                 if by_app:
-                    row.set_subtitle(GLib.markup_escape_text(f"running for {by_app} · {summary}"))
+                    row.set_subtitle(GLib.markup_escape_text(f"chosen for {by_app} · {summary}"))
                 row.add_prefix(Gtk.Image.new_from_icon_name("object-select-symbolic"))
             if dev.hidpp is not None:  # host mode needs HID++ (not available on the G600)
                 # A switch read like "on/off", but a device runs exactly one profile:
                 # turning one on silently turned the other off. A button says what it
                 # does, and focusing a window can switch it the same way.
-                use = Gtk.Button(label="Running" if running else "Use", valign=Gtk.Align.CENTER,
+                use = Gtk.Button(label="Selected" if running else "Use", valign=Gtk.Align.CENTER,
                                  css_classes=["suggested-action"] if not running else [],
-                                 sensitive=not running)
+                                 sensitive=not running,
+                                 tooltip_text="This profile is chosen for the device" if running
+                                 else "Run this profile on the device")
                 use.connect("clicked", lambda _b, n=prof.name: self.set_host(n))
                 row.add_suffix(use)
             menu = Gio.Menu()
