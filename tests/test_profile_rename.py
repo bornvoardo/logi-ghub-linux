@@ -29,7 +29,8 @@ def test_a_rename_keeps_the_contents(store):
 
 def test_the_old_file_is_gone(store):
     profiles.rename_profile(DEV, "konsole", "Terminal")
-    names = [p.name for p in profiles.list_profiles(DEV)]
+    # "Default" is created by list_profiles and is not this test's subject.
+    names = [p.name for p in profiles.list_profiles(DEV) if p.name != profiles.DEFAULT_NAME]
     assert names == ["Terminal"]
 
 
@@ -62,12 +63,12 @@ def test_an_existing_name_is_refused(store):
     with pytest.raises(ValueError, match="already exists"):
         profiles.rename_profile(DEV, "konsole", "baska")
     # Nothing changed.
-    assert sorted(p.name for p in profiles.list_profiles(DEV)) == ["baska", "konsole"]
+    assert sorted(p.name for p in profiles.list_profiles(DEV) if p.name != profiles.DEFAULT_NAME) == ["baska", "konsole"]
 
 
 def test_renaming_to_the_same_name_is_a_no_op(store):
     profiles.rename_profile(DEV, "konsole", "konsole")
-    assert [p.name for p in profiles.list_profiles(DEV)] == ["konsole"]
+    assert [p.name for p in profiles.list_profiles(DEV) if p.name != profiles.DEFAULT_NAME] == ["konsole"]
 
 
 def test_the_name_is_written_inside_the_file(store):

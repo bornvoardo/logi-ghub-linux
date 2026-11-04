@@ -186,6 +186,14 @@ def write_to_onboard(memory: ob.OnboardProfiles, profile: Profile, slot: int, sl
 
 
 # --- storage -------------------------------------------------------------------
+DEFAULT_NAME = "Default"
+"""The profile every device has and cannot lose.
+
+It is the one the device falls back to, so the app creates it when it is missing,
+lists it first, and refuses to delete or rename it.
+"""
+
+
 def _slug(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_") or "profile"
 
@@ -197,13 +205,42 @@ def profile_dir(model_key: str) -> Path:
 
 
 def list_profiles(model_key: str) -> list[Profile]:
+    """Every profile of a device, the default one first.
+
+    The default profile always exists: a device without one has no fallback, and the
+    rules page had to offer "No default" because of it.
+    """
+    ensure_default(model_key)
     out = []
     for f in sorted(profile_dir(model_key).glob("*.json")):
         try:
             out.append(Profile.from_dict(json.loads(f.read_text())))
         except (ValueError, KeyError) as e:
             log.warning("skipping broken profile %s: %s", f, e)
+    out.sort(key=lambda p: (p.name != DEFAULT_NAME, p.name.lower()))
     return out
+
+
+def ensure_default(model_key: str) -> Profile:
+    """Create the default profile when it is missing, and return it.
+
+    Called from list_profiles, so every place that shows profiles also repairs a
+    device that somehow lost it.
+    """
+    path = profile_dir(model_key) / f"{_slug(DEFAULT_NAME)}.json"
+    if path.exists():
+        try:
+            return Profile.from_dict(json.loads(path.read_text()))
+        except (ValueError, KeyError):
+            pass  # unreadable: rewrite it below
+    profile = Profile(name=DEFAULT_NAME, device=model_key)
+    path.write_text(json.dumps(profile.to_dict(), indent=2))
+    return profile
+
+
+def is_protected(name: str) -> bool:
+    """The default profile cannot be deleted or renamed out of existence."""
+    return name == DEFAULT_NAME
 
 
 def load_profile(model_key: str, name: str) -> Profile:
@@ -228,6 +265,10 @@ def rename_profile(model_key: str, old_name: str, new_name: str) -> Path:
     profile = load_profile(model_key, old_name)
     if new_name == old_name:
         return save_profile(profile)
+    if is_protected(old_name):
+        raise ValueError(f"“{old_name}” is the default profile and cannot be renamed")
+    if is_protected(new_name):
+        raise ValueError(f"“{new_name}” is reserved for the default profile")
     if any(p.name == new_name for p in list_profiles(model_key)):
         raise ValueError(f"a profile called {new_name!r} already exists")
 
@@ -253,6 +294,8 @@ def rename_profile(model_key: str, old_name: str, new_name: str) -> Path:
 
 
 def delete_profile(model_key: str, name: str) -> None:
+    if is_protected(name):
+        raise ValueError(f"“{name}” is the default profile and cannot be deleted")
     (profile_dir(model_key) / f"{_slug(name)}.json").unlink(missing_ok=True)
 
 

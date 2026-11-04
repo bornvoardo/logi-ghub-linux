@@ -357,14 +357,15 @@ class DevicePane(Gtk.Box):
         row.add_suffix(on)
         g.add(row)
 
+        # The default profile always exists, so the list has no "No default" entry:
+        # it would only mean "fall back to nothing".
         choices = Gtk.StringList()
-        choices.append("No default")
         for name in names:
             choices.append(name)
         default_row = Adw.ComboRow(title="Default profile", model=choices,
                                    subtitle="Used when no rule matches")
-        current = rules.defaults.get(dev.key)
-        default_row.set_selected(names.index(current) + 1 if current in names else 0)
+        current = rules.defaults.get(dev.key) or profiles.DEFAULT_NAME
+        default_row.set_selected(names.index(current) if current in names else 0)
         default_row.connect("notify::selected", lambda r, _p: self._set_app_default(names, r.get_selected()))
         g.add(default_row)
 
@@ -419,13 +420,12 @@ class DevicePane(Gtk.Box):
         from .. import appwatch
 
         rules = appwatch.AppRules.load()
-        if selected == 0:
-            rules.defaults.pop(self.dev.key, None)
-            self.toast("No default profile")
-        else:
-            rules.defaults[self.dev.key] = names[selected - 1]
-            self.toast(f"Default profile: {names[selected - 1]}")
+        # There is no "No default" entry any more: the list starts at the first
+        # profile, so the selected index is the profile itself.
+        name = names[selected] if 0 <= selected < len(names) else profiles.DEFAULT_NAME
+        rules.defaults[self.dev.key] = name
         rules.save()
+        self.toast(f"Default profile: {name}")
 
     def _move_app_rule(self, match: str, device: str | None, delta: int):
         from .. import appwatch
@@ -637,9 +637,13 @@ class DevicePane(Gtk.Box):
             else:
                 summary = f"{'/'.join(map(str, prof.dpi_stages))} DPI · {len(prof.macros)} macros"
             running = prof.name == active
+            locked = profiles.is_protected(prof.name)
             row = Adw.ActionRow(title=GLib.markup_escape_text(prof.name), subtitle=summary,
-                                activatable=True, tooltip_text="Click to rename")
-            row.connect("activated", lambda _r, pr=prof: self.rename_profile(pr))
+                                activatable=not locked,
+                                tooltip_text="The default profile cannot be renamed" if locked
+                                else "Click to rename")
+            if not locked:
+                row.connect("activated", lambda _r, pr=prof: self.rename_profile(pr))
             if running:
                 # Say why this one is running when a window rule put it there:
                 # the user did not press Use, so a bare check mark looks wrong.
@@ -661,7 +665,10 @@ class DevicePane(Gtk.Box):
             menu = Gio.Menu()
             for p in self.slots:
                 menu.append(f"Write to on-board slot {p.sector}", f"pane.write-slot::{prof.name}\x1f{p.sector}")
-            menu.append("Delete", f"pane.delete-profile::{prof.name}")
+            if not locked:
+                # The default profile is the device's fallback: deleting it would
+                # leave nothing to fall back to, so the entry is not offered.
+                menu.append("Delete", f"pane.delete-profile::{prof.name}")
             mb = Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=menu, valign=Gtk.Align.CENTER)
             row.add_suffix(mb)
             e = Gtk.Button(label="Edit", valign=Gtk.Align.CENTER, sensitive=self.target != ("computer", prof.name))
@@ -862,6 +869,10 @@ class DevicePane(Gtk.Box):
         d.present(self.win)
 
     def delete_profile(self, name: str):
+        if profiles.is_protected(name):
+            self.toast(f"“{name}” is the default profile and cannot be deleted")
+            return
+
         def go():
             profiles.delete_profile(self.dev.key, name)
             if profiles.get_active().get(self.dev.key) == name:
