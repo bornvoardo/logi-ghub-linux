@@ -86,12 +86,17 @@ class Renderer:
     """Computes the colour of every key at a point in time."""
 
     def __init__(self, light: dict, zones: list[int] | None = None, clusters: int = 2,
-                 layout_name: str = layout.DEFAULT_LAYOUT):
+                 layout_name: str | None = None):
         self.light = light or {}
-        self.caps = layout.keycaps(zones, layout_name)
-        x0, y0, x1, y1 = layout.bounds(self.caps, layout=layout_name) if self.caps else (0, 0, 1, 1)
+        # The zone list says which board this is, so a caller that does not know
+        # still gets the right picture. Without this, keys outside the default
+        # board (a numpad, G6..G9) are missing from every frame, and painting a
+        # key then sends a frame without them, which blanks them on the keyboard.
+        name = layout_name or layout.detect_layout(zones)
+        self.caps = layout.keycaps(zones, name)
+        x0, y0, x1, y1 = layout.bounds(self.caps, layout=name) if self.caps else (0, 0, 1, 1)
         main = [c for c in self.caps if c.y >= 0] or self.caps
-        mx0, my0, mx1, my1 = layout.bounds(main, layout=layout_name) if main else (0, 0, 1, 1)
+        mx0, my0, mx1, my1 = layout.bounds(main, layout=name) if main else (0, 0, 1, 1)
         self.pos: dict[int, tuple[float, float]] = {}
         for c in self.caps:
             fx = (c.cx - mx0) / max(1e-6, mx1 - mx0)
@@ -240,7 +245,7 @@ class Animator(threading.Thread):
         self.stop_event.set()
 
 
-def apply(dev, light: dict, *, claim: bool = True) -> Animator | None:
+def apply(dev, light: dict, *, claim: bool = True, layout_name: str = layout.DEFAULT_LAYOUT) -> Animator | None:
     """Apply a lighting dict to ``dev``. Returns the running animator for colour sequences."""
     rgb, pk = dev.rgb, dev.per_key
     if rgb is None:
@@ -249,7 +254,7 @@ def apply(dev, light: dict, *, claim: bool = True) -> Animator | None:
         rgb.claim()
     if dev.brightness and light.get("brightness") is not None:
         dev.brightness.set(int(light["brightness"]))
-    renderer = Renderer(light, pk.zones if pk else None, len(rgb.zones))
+    renderer = Renderer(light, pk.zones if pk else None, len(rgb.zones), layout_name)
     if renderer.animation and pk:
         rgb.hold_static()  # per-key frames show only while the firmware effect is Static
         anim = Animator(dev, renderer)

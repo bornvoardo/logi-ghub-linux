@@ -1306,7 +1306,7 @@ class DevicePane(Gtk.Box):
                 old.stop()
                 old.join(timeout=1)
             claimed = getattr(self, "_claimed", False)
-            anim = lightfx.apply(dev, light, claim=not claimed)
+            anim = lightfx.apply(dev, light, claim=not claimed, layout_name=self.keyboard_layout())
             self._claimed = True
             return anim
 
