@@ -400,6 +400,7 @@ class Session:
         a = self.action_for(i)
         self.pressed[i] = a
         k = a.kind
+        log.info("%s: button %s pressed -> %s (layer %s)", self.dev.name, i, a.label(), self.gshift)
         codes: list[int] = []
         if k == "mouse":
             if self._remap_table()[i] == 0:
