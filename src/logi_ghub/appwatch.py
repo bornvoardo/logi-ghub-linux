@@ -180,7 +180,12 @@ def resolve_app_id(resource_class: str, desktop_file_name: str = "") -> str:
     the class up in the .desktop directories, and fall back to the class itself.
     """
     if desktop_file_name:
-        return Path(desktop_file_name).stem
+        # KWin reports the .desktop file without its extension ("org.kde.konsole"),
+        # but a full path also arrives when the file is not installed system-wide.
+        # Path.stem would cut "org.kde.konsole" down to "org.kde", so the extension
+        # is only removed when it is really there.
+        name = Path(desktop_file_name).name
+        return name[: -len(".desktop")] if name.endswith(".desktop") else name
     if not resource_class:
         return ""
     key = resource_class.lower()

@@ -115,6 +115,30 @@ class TestAppIdentity:
         assert appwatch.resolve_app_id("some_game") == "some_game"
 
 
+class TestResolveAppId:
+    def test_a_desktop_name_without_an_extension_is_kept_whole(self):
+        """KWin reports "org.kde.konsole", not "org.kde.konsole.desktop".
+        Path.stem treated ".konsole" as an extension and returned "org.kde",
+        which no window class matches."""
+        assert appwatch.resolve_app_id("org.kde.konsole", "org.kde.konsole") == "org.kde.konsole"
+        assert appwatch.resolve_app_id("org.kde.dolphin", "org.kde.dolphin") == "org.kde.dolphin"
+
+    def test_a_real_extension_is_removed(self):
+        assert appwatch.resolve_app_id("firefox", "firefox.desktop") == "firefox"
+
+    def test_a_full_path_keeps_only_the_file_name(self):
+        assert appwatch.resolve_app_id("firefox", "/usr/share/applications/firefox.desktop") == "firefox"
+
+    def test_the_class_is_used_when_no_desktop_name_arrives(self):
+        assert appwatch.resolve_app_id("steam_app_3131230", "") == "steam_app_3131230"
+
+    def test_a_rule_matches_the_resolved_name(self):
+        """The two halves have to agree, or every rule made from the app misses."""
+        app_id = appwatch.resolve_app_id("org.kde.konsole", "org.kde.konsole")
+        assert appwatch.Rule("org.kde.konsole", "terminal").matches(app_id, "")
+        assert not appwatch.Rule("org.kde", "terminal").matches(app_id, "")
+
+
 class TestFocus:
     def test_the_shell_is_ignored(self):
         w = appwatch.Watcher(appwatch.AppRules(), on_focus=lambda *a: pytest.fail("should not fire"))
