@@ -45,6 +45,9 @@ sed "s|^Exec=logi-ghub|Exec=$BIN/logi-ghub|" "$REPO/data/$DESKTOP" > "$APPS/$DES
 install -m 644 "$REPO/data/systemd/logi-ghubd.service" "$UNITS/"
 install -d "$DATA/kwin"
 install -m 644 "$REPO/data/kwin/logi-ghub-focus.js" "$DATA/kwin/"
+# Panel icons: the G-Shift indicator lives next to the tray's other icons.
+install -d "$PREFIX/share/icons/hicolor/scalable/apps"
+install -m 644 "$REPO/data/icons/logi-ghub-gshift.svg" "$PREFIX/share/icons/hicolor/scalable/apps/"
 systemctl --user daemon-reload 2>/dev/null || true
 
 if [ "${1:-}" = "--udev" ]; then

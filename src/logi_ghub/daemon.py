@@ -18,6 +18,8 @@ Devices without an active profile are left alone.
 
 from __future__ import annotations
 
+import json
+
 import argparse
 import logging
 import os
@@ -27,6 +29,7 @@ import threading
 import time
 
 from . import handback, keyremap, keys, lightfx, profiles
+from .config import config_dir
 from .actions import Action
 from .device import LogiDevice, find_devices
 from .features import lighting
@@ -510,6 +513,20 @@ class Daemon:
         """Every running profile redraws its button remapping for the new layer."""
         for session in list(self.sessions.values()):
             session.apply_remapping()
+        self._publish_layer(on)
+
+    def _publish_layer(self, on: bool) -> None:
+        """Tell the tray the layer is open.
+
+        The tray is a separate process, so it cannot read this flag. It watches
+        this small file with GLib.FileMonitor instead, which reports the change
+        within a few milliseconds and costs nothing while the layer is idle.
+        """
+        path = config_dir() / "gshift-state.json"
+        try:
+            path.write_text(json.dumps({"open": bool(on)}))
+        except OSError as e:
+            log.info("could not write the layer state: %s", e)
 
     def _devices(self) -> list[LogiDevice]:
         if self.fake:

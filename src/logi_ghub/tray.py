@@ -8,6 +8,7 @@ nothing beyond PyGObject's Gio.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import subprocess
@@ -21,6 +22,7 @@ gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib  # noqa: E402
 
 from . import profiles  # noqa: E402
+from .config import config_dir  # noqa: E402
 from .device import find_devices  # noqa: E402
 
 log = logging.getLogger("logi-ghub-tray")
@@ -134,13 +136,43 @@ class Tray:
         self.items: dict[int, MenuItem] = {}
         self.root = MenuItem("root")
         self.loop = GLib.MainLoop()
+        # The daemon publishes the G-Shift layer in a small file; watching it with
+        # GLib.FileMonitor reports the change in a few milliseconds and costs
+        # nothing while the layer is idle.
+        self.gshift_open = False
+        self._layer_monitor: Gio.FileMonitor | None = None
         sni_info = Gio.DBusNodeInfo.new_for_xml(SNI_XML).interfaces[0]
         menu_info = Gio.DBusNodeInfo.new_for_xml(MENU_XML).interfaces[0]
         self.bus.register_object("/StatusNotifierItem", sni_info, self._sni_call, self._sni_get, None)
         self.bus.register_object("/MenuBar", menu_info, self._menu_call, self._menu_get, None)
         self.name = f"org.kde.StatusNotifierItem-{os.getpid()}-1"
         Gio.bus_own_name_on_connection(self.bus, self.name, Gio.BusNameOwnerFlags.NONE, self._owned, None)
+        self.watch_layer()
         self.rebuild()
+
+    # -- the G-Shift layer -------------------------------------------------------------
+    def watch_layer(self) -> None:
+        """Start watching the file the daemon writes when the layer opens or closes."""
+        path = config_dir() / "gshift-state.json"
+        self._read_layer(path)
+        try:
+            path.touch(exist_ok=True)
+            monitor = Gio.File.new_for_path(str(path)).monitor_file(Gio.FileMonitorFlags.NONE, None)
+            self._layer_monitor = monitor
+            monitor.connect("changed", lambda *_: self._read_layer(path))
+        except GLib.Error as e:
+            log.info("the G-Shift indicator will not follow the layer: %s", e.message)
+
+    def _read_layer(self, path) -> None:
+        try:
+            on = bool(json.loads(path.read_text()).get("open"))
+        except (OSError, ValueError):
+            on = False
+        if on == self.gshift_open:
+            return
+        self.gshift_open = on
+        self.bus.emit_signal(None, "/StatusNotifierItem", "org.kde.StatusNotifierItem", "NewIcon", None)
+
 
     # -- registration -----------------------------------------------------------------
     def _owned(self, *_):
@@ -179,6 +211,10 @@ class Tray:
         return values.get(prop)
 
     def icon_name(self) -> str:
+        # While the G-Shift key is held the panel shows a G, so the second layer
+        # is visible without looking at the keyboard.
+        if self.gshift_open:
+            return "logi-ghub-gshift"
         levels = [s.battery for s in self.states.values() if s.online and s.battery is not None and not s.charging]
         if levels and min(levels) <= LOW_BATTERY:
             return "battery-caution-symbolic"
