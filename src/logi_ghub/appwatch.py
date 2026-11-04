@@ -151,9 +151,61 @@ class AppRules:
 
     # -- editing ---------------------------------------------------------------
     def add(self, match: str, profile: str, device: str | None = None, title: str | None = None) -> Rule:
+        """Add a rule, or replace one with the same pattern in the same place.
+
+        Rules are matched in order and the first match wins, so re-adding an
+        existing pattern must not move it to the end: that silently changed which
+        rule applied.
+        """
         rule = Rule(match, profile, device, title)
-        self.rules = [r for r in self.rules if (r.match, r.device) != (match, device)] + [rule]
+        out = []
+        replaced = False
+        for existing in self.rules:
+            if (existing.match, existing.device) == (match, device):
+                if not replaced:
+                    out.append(rule)
+                    replaced = True
+                continue
+            out.append(existing)
+        if not replaced:
+            out.append(rule)
+        self.rules = out
         return rule
+
+    def move(self, match: str, device: str | None, delta: int) -> bool:
+        """Swap a rule with its neighbour: -1 up, +1 down.
+
+        Returns False at the edge of the list. The delta is clamped, because the
+        only moves the app offers are one place at a time and a larger value would
+        swap a rule with one further away, which is not what an arrow means.
+        """
+        index = self.index_of(match, device)
+        if index is None:
+            return False
+        target = index + (1 if delta > 0 else -1)
+        if not 0 <= target < len(self.rules):
+            return False
+        rules = list(self.rules)
+        rules[index], rules[target] = rules[target], rules[index]
+        self.rules = rules
+        return True
+
+    def index_of(self, match: str, device: str | None = None) -> int | None:
+        """Where a rule sits in the match order, or None when it is not there."""
+        for i, r in enumerate(self.rules):
+            if (r.match, r.device) == (match, device):
+                return i
+        return None
+
+    def move_to(self, match: str, device: str | None, index: int) -> bool:
+        """Put a rule at a given position, used when its pattern was renamed."""
+        current = self.index_of(match, device)
+        if current is None:
+            return False
+        index = max(0, min(index, len(self.rules) - 1))
+        rule = self.rules.pop(current)
+        self.rules.insert(index, rule)
+        return True
 
     def remove(self, match: str, device: str | None = None) -> int:
         before = len(self.rules)

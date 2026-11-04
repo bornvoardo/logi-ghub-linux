@@ -345,14 +345,29 @@ class DevicePane(Gtk.Box):
         if not mine:
             g.add(Adw.ActionRow(title="No applications yet",
                                 subtitle="Add a window class below, for example 'steam_app_*' or 'firefox'."))
-        for rule in mine:
+        else:
+            g.add(Adw.ActionRow(title="Checked in order, first match wins",
+                                subtitle="Use the arrows to change which rule is tried first."))
+        for position, rule in enumerate(mine, start=1):
             row = Adw.ActionRow(title=GLib.markup_escape_text(rule.match),
-                                subtitle=GLib.markup_escape_text(rule.profile
+                                subtitle=GLib.markup_escape_text(f"{position}. → {rule.profile}"
                                                                  + (f" · title has {rule.title!r}" if rule.title else "")),
                                 activatable=True)
+
+            up = Gtk.Button(icon_name="go-up-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"],
+                            sensitive=position > 1, tooltip_text="Try this rule earlier")
+            up.connect("clicked", lambda _b, m=rule.match, d=rule.device: self._move_app_rule(m, d, -1))
+            row.add_suffix(up)
+
+            down = Gtk.Button(icon_name="go-down-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"],
+                              sensitive=position < len(mine), tooltip_text="Try this rule later")
+            down.connect("clicked", lambda _b, m=rule.match, d=rule.device: self._move_app_rule(m, d, +1))
+            row.add_suffix(down)
+
             rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"])
             rm.connect("clicked", lambda _b, m=rule.match, d=rule.device: self._remove_app_rule(m, d))
             row.add_suffix(rm)
+
             row.connect("activated", lambda _r, ru=rule: self._add_app_rule(names, ru))
             g.add(row)
 
@@ -379,6 +394,14 @@ class DevicePane(Gtk.Box):
             rules.defaults[self.dev.key] = names[selected - 1]
             self.toast(f"Default profile: {names[selected - 1]}")
         rules.save()
+
+    def _move_app_rule(self, match: str, device: str | None, delta: int):
+        from .. import appwatch
+
+        rules = appwatch.AppRules.load()
+        if rules.move(match, device, delta):
+            rules.save()
+            self.build_profiles()
 
     def _remove_app_rule(self, match: str, device: str | None):
         from .. import appwatch
@@ -434,11 +457,20 @@ class DevicePane(Gtk.Box):
             profile = names[picker.get_selected()]
             rules = appwatch.AppRules.load()
             if editing:
-                # The pattern itself can change, so drop the old one first.
+                # The pattern can change, so the old one goes. add() keeps the
+                # position when the pattern is unchanged.
                 assert rule is not None
-                rules.remove(rule.match, rule.device)
+                if pattern != rule.match:
+                    old_pos = rules.index_of(rule.match, rule.device)
+                    rules.remove(rule.match, rule.device)
+                else:
+                    old_pos = None
+            else:
+                old_pos = None
             # Every rule belongs to the device whose page it was made on.
             rules.add(pattern, profile, dev.key)
+            if old_pos is not None:
+                rules.move_to(pattern, dev.key, old_pos)
             rules.save()
             self.build_profiles()
             self.toast(f"{pattern} → {profile}")
