@@ -300,7 +300,12 @@ class Brightness:
 # Per-key zone ids follow HID keyboard usages shifted down by 3 for the main
 # block (A = usage 0x04 = zone 1) and by 120 for modifiers (LeftCtrl 0xE0 = 104).
 SPECIAL_ZONES = {"Brightness": 153, "Play/Pause": 155, "Mute": 156, "Next": 157, "Previous": 158,
-                 "G1": 180, "G2": 181, "G3": 182, "G4": 183, "G5": 184, "Logo": 210}
+                 "G1": 180, "G2": 181, "G3": 182, "G4": 183, "G5": 184, "G6": 185, "G7": 186,
+                 "G8": 187, "G9": 188, "Logo": 210}
+# The G-key zone ids come from the 0x8081 LED map of this keyboard family, where
+# G1..G9 are a contiguous block (0xB4..0xBC in the reverse-engineered map, 180..188
+# as zones). G1..G5 were confirmed on the TKL; G6..G9 are the straight continuation
+# and still have to be checked on a full-size board.
 
 
 def zone_for_hid(usage: int) -> int | None:
