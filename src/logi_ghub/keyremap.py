@@ -46,6 +46,7 @@ MEDIA_KEYS = {"Mute": "Mute", "Play/Pause": "Play/Pause", "Previous": "Previous 
 # The G-keys reach the computer as plain function keys: G1..G9 are F13..F21
 # (evdev codes 183..191). Nothing about them is proprietary on the host side,
 # so a profile assigns them by name and the daemon grabs the keycode.
+# Measured on a G915 X wired full-size (046d:c359); see docs/hardware-g915x-wired.md.
 G_KEYS = {f"G{i}": f"F{i + 12}" for i in range(1, 10)}
 
 
