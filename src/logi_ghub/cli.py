@@ -381,6 +381,76 @@ def cmd_lighting(args) -> None:
     print("Note: the device returns to its on-board lighting when the daemon is not running and it wakes from sleep.")
 
 
+def cmd_apps(args) -> None:
+    from . import appwatch
+
+    sub = args.apps_cmd
+    rules = appwatch.AppRules.load()
+    if sub == "list":
+        state = "on" if rules.enabled else "off"
+        print(f"application profiles: {state}")
+        if rules.defaults:
+            print("\ndefault profile per device:")
+            for device, name in sorted(rules.defaults.items()):
+                print(f"  {device:<14} {name}")
+        else:
+            print("\nno default profile set")
+        if rules.rules:
+            print("\nwindow rules:")
+            for r in rules.rules:
+                bits = [f"{r.match:<24}", f"-> {r.profile:<18}"]
+                bits.append(f"[{r.device}]" if r.device else "[every device]")
+                if r.title:
+                    bits.append(f"title contains {r.title!r}")
+                print("  " + " ".join(bits))
+        else:
+            print("\nno window rules")
+        return
+    if sub == "add":
+        key = args.device_model
+        if key and not any(p.name == args.profile for p in profiles.list_profiles(key)):
+            raise SystemExit(f"no profile {args.profile!r} for {key}; create it first "
+                             f"(logi-ghub-cli -d {key} profile keys {args.profile} ...)")
+        rule = rules.add(args.match, args.profile, key, args.title)
+        print(f"saved {rules.save()}")
+        print(f"  {rule.match} -> {rule.profile}" + (f" [{rule.device}]" if rule.device else " [every device]"))
+        print("the daemon picks up the rules file within a second; no restart needed")
+        return
+    if sub == "remove":
+        count = rules.remove(args.match, args.device_model)
+        if not count:
+            raise SystemExit(f"no rule matches {args.match!r}")
+        rules.save()
+        print(f"removed {count} rule(s)")
+        return
+    if sub == "default":
+        if args.profile in (None, ""):
+            rules.defaults.pop(args.device_model, None)
+            rules.save()
+            print(f"{args.device_model}: no default profile")
+            return
+        if not any(p.name == args.profile for p in profiles.list_profiles(args.device_model)):
+            raise SystemExit(f"no profile {args.profile!r} for {args.device_model}")
+        rules.defaults[args.device_model] = args.profile
+        rules.save()
+        print(f"{args.device_model}: default profile is now {args.profile!r}")
+        return
+    if sub in ("on", "off"):
+        rules.enabled = sub == "on"
+        rules.save()
+        print("application profiles are now " + ("on" if rules.enabled else "off"))
+        print("restart the service to load or unload the KWin script: systemctl --user restart logi-ghubd")
+        return
+    if sub == "status":
+        from . import appwatch as aw
+
+        print(f"rules file : {aw.rules_path()}" + ("" if aw.rules_path().exists() else " (missing)"))
+        print(f"enabled    : {rules.enabled}")
+        print(f"KDE session: {aw.kwin_available()}")
+        print(f"rules      : {len(rules.rules)}   defaults: {len(rules.defaults)}")
+        return
+
+
 def cmd_profile(args) -> None:
     sub = args.profile_cmd
     if sub == "list":
@@ -544,6 +614,24 @@ def main(argv: list[str] | None = None) -> int:
 
     sp.add_parser("daemon", help="run the host-mode daemon in the foreground")
 
+    a = sp.add_parser("apps", help="switch profiles by the focused window (KDE)")
+    asp = a.add_subparsers(dest="apps_cmd", required=True)
+    asp.add_parser("list", help="show the rules and the default profiles")
+    asp.add_parser("status", help="say whether the rules file and the desktop support exist")
+    q = asp.add_parser("add", help="send a window to a profile")
+    q.add_argument("match", help="window class pattern, e.g. 'steam_app_*' or 'firefox'")
+    q.add_argument("--profile", required=True, help="profile to run")
+    q.add_argument("--device", dest="device_model", help="limit to one device (046d:c359); default: every device")
+    q.add_argument("--title", help="also require this text in the window title")
+    q = asp.add_parser("remove", help="drop a rule")
+    q.add_argument("match")
+    q.add_argument("--device", dest="device_model", help="the rule's device, if it had one")
+    q = asp.add_parser("default", help="set (or with no --profile, clear) a device's fallback profile")
+    q.add_argument("device_model", help="model id, e.g. 046d:c359")
+    q.add_argument("--profile")
+    asp.add_parser("on", help="enable application profiles")
+    asp.add_parser("off", help="disable application profiles")
+
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     if args.fake:
@@ -556,7 +644,8 @@ def main(argv: list[str] | None = None) -> int:
 
             return daemon_main([])
         handler = {"list": cmd_list, "info": cmd_info, "probe": cmd_probe, "dpi": cmd_dpi, "rate": cmd_rate,
-                   "onboard": cmd_onboard, "lighting": cmd_lighting, "profile": cmd_profile}[args.cmd]
+                   "onboard": cmd_onboard, "lighting": cmd_lighting, "profile": cmd_profile,
+                   "apps": cmd_apps}[args.cmd]
         handler(args)
     except (LookupError, ValueError, HIDPPError, DeviceOffline, TimeoutError, FileNotFoundError) as e:
         print(f"error: {e}", file=sys.stderr)

@@ -408,6 +408,10 @@ class Daemon:
         self.runner = MacroRunner(self.vinput)
         self._active_mtime = 0
         self._last_scan = 0.0
+        # Application profiles: a KWin script reports the focused window, and the
+        # rules in app-profiles.json decide which profile each device should run.
+        # Off unless the rules file exists, so a plain install behaves as before.
+        self.watcher = None
 
     def _devices(self) -> list[LogiDevice]:
         if self.fake:
@@ -477,6 +481,7 @@ class Daemon:
 
     def run(self) -> None:
         log.info("logi-ghubd started")
+        self.start_app_watch()
         while not self.stop.is_set():
             now = time.monotonic()
             try:
@@ -510,8 +515,24 @@ class Daemon:
                 self.sessions.pop(s.dev.key, None)
         self.shutdown()
 
+    def start_app_watch(self) -> None:
+        """Turn on application profiles when a rules file exists."""
+        from . import appwatch
+
+        if not appwatch.rules_path().exists():
+            return
+        try:
+            watcher = appwatch.Watcher()
+            if watcher.start():
+                self.watcher = watcher
+        except Exception as e:  # noqa: BLE001 - window tracking must never stop the profiles
+            log.warning("application profiles unavailable: %s", e)
+
     def shutdown(self) -> None:
         self.runner.stop_all()
+        if self.watcher is not None:
+            self.watcher.stop()
+            self.watcher = None
         for key in list(self.sessions):
             self.end(key)
         if self.vinput:

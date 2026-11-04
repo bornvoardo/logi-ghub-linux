@@ -1,0 +1,401 @@
+"""Per-application profiles: switch a device's profile when a window gets focus.
+
+The pattern is the one logitune and gamerat use on KDE, and it exists because of a
+Wayland limitation: a normal program cannot see which window has focus. KWin knows,
+but only its own scripts may read that. So:
+
+* a small KWin script (``data/kwin/logi-ghub-focus.js``) listens to
+  ``workspace.windowActivated`` and calls a D-Bus method with the window's class,
+  caption and .desktop name,
+* this module owns that D-Bus service, matches the app against the rules, and
+  writes the resulting profile into ``active.json``,
+* the daemon already watches that file, so it applies the profile within a second.
+
+KWin scripts cannot register D-Bus services of their own, which is why the service
+lives here and the script only calls it.
+
+The window's ``resourceClass`` is not always the name a .desktop file has (Zoom
+reports ``zoom`` but installs ``us.zoom.Zoom.desktop``), so the class goes through
+the same resolution chain logitune uses: the .desktop name KWin reports, then a
+lookup in the .desktop directories, then the class itself.
+"""
+
+from __future__ import annotations
+
+import configparser
+import fnmatch
+import json
+import logging
+import os
+import shutil
+import subprocess
+import threading
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+SERVICE = "org.logi_ghub.Focus"
+OBJECT = "/Focus"
+INTERFACE = "org.logi_ghub.Focus"
+
+# Shells and launchers take focus for a moment and then hand it back. Switching on
+# them would flap the profile every time the launcher opens.
+IGNORED = {
+    "plasmashell", "org.kde.plasmashell", "kwin_wayland", "kwin_x11",
+    "org.kde.krunner", "krunner", "gnome-shell", "org.gnome.shell",
+    "org.gnome.shell.extensions", "org.kde.plasma-desktop",
+}
+
+# Where .desktop files live, in the order logitune searches them.
+DESKTOP_DIRS = (
+    "/usr/share/applications",
+    "/usr/local/share/applications",
+    "/var/lib/flatpak/exports/share/applications",
+    "/var/lib/snapd/desktop/applications",
+    str(Path.home() / ".local" / "share" / "applications"),
+    str(Path.home() / ".local" / "share" / "flatpak" / "exports" / "share" / "applications"),
+)
+
+SERVICE_XML = f"""
+<node>
+  <interface name="{INTERFACE}">
+    <method name="focusChanged">
+      <arg type="s" direction="in" name="resourceClass"/>
+      <arg type="s" direction="in" name="caption"/>
+      <arg type="s" direction="in" name="desktopFileName"/>
+    </method>
+    <method name="focusLost"/>
+  </interface>
+</node>
+"""
+
+
+# -- rules ---------------------------------------------------------------------
+
+@dataclass
+class Rule:
+    """One window-to-profile binding.
+
+    ``match`` is a shell-style pattern (``steam_app_*``, ``firefox``). ``device``
+    limits the rule to one model key; leaving it None applies it to every device
+    that has a profile of that name. ``title`` narrows a match further and is off
+    by default: captions change with the document and the menu, so they make poor
+    triggers.
+    """
+
+    match: str
+    profile: str
+    device: str | None = None
+    title: str | None = None
+
+    def matches(self, app_id: str, caption: str) -> bool:
+        if not fnmatch.fnmatchcase(app_id.lower(), self.match.lower()):
+            return False
+        if self.title and self.title.lower() not in (caption or "").lower():
+            return False
+        return True
+
+
+@dataclass
+class AppRules:
+    """The rule file: rules in order, plus the profile each device falls back to."""
+
+    rules: list[Rule] = field(default_factory=list)
+    defaults: dict[str, str] = field(default_factory=dict)
+    enabled: bool = True
+
+    # -- disk ------------------------------------------------------------------
+    @classmethod
+    def load(cls, path: Path | None = None) -> "AppRules":
+        path = path or rules_path()
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return cls()
+        rules = []
+        for entry in data.get("rules") or []:
+            try:
+                rules.append(Rule(
+                    match=str(entry["match"]),
+                    profile=str(entry["profile"]),
+                    device=(str(entry["device"]) if entry.get("device") else None),
+                    title=(str(entry["title"]) if entry.get("title") else None),
+                ))
+            except (KeyError, TypeError):
+                log.warning("skipping a malformed rule: %r", entry)
+        defaults = {str(k): str(v) for k, v in (data.get("defaults") or {}).items()}
+        return cls(rules, defaults, bool(data.get("enabled", True)))
+
+    def save(self, path: Path | None = None) -> Path:
+        path = path or rules_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = {"enabled": self.enabled, "rules": [asdict(r) for r in self.rules], "defaults": dict(self.defaults)}
+        path.write_text(json.dumps(body, indent=2) + "\n")
+        return path
+
+    # -- decisions -------------------------------------------------------------
+    def profile_for(self, device: str, app_id: str, caption: str) -> str | None:
+        """The profile this window should give ``device``, or None to leave it alone."""
+        for rule in self.rules:
+            if rule.device not in (None, device):
+                continue
+            if rule.matches(app_id, caption):
+                return rule.profile
+        return self.defaults.get(device)
+
+    def devices(self) -> set[str]:
+        out = set(self.defaults)
+        out.update(r.device for r in self.rules if r.device)
+        return out
+
+    # -- editing ---------------------------------------------------------------
+    def add(self, match: str, profile: str, device: str | None = None, title: str | None = None) -> Rule:
+        rule = Rule(match, profile, device, title)
+        self.rules = [r for r in self.rules if (r.match, r.device) != (match, device)] + [rule]
+        return rule
+
+    def remove(self, match: str, device: str | None = None) -> int:
+        before = len(self.rules)
+        self.rules = [r for r in self.rules if (r.match, r.device) != (match, device)]
+        return before - len(self.rules)
+
+
+def rules_path() -> Path:
+    from .config import config_dir
+
+    return config_dir() / "app-profiles.json"
+
+
+# -- app identity --------------------------------------------------------------
+
+_resolve_cache: dict[str, str] = {}
+
+
+def resolve_app_id(resource_class: str, desktop_file_name: str = "") -> str:
+    """The name a rule should match: a .desktop base name where one exists.
+
+    KWin reports a window class, not an installed application. The three steps are
+    the ones logitune arrived at: trust the .desktop name when KWin gives one, look
+    the class up in the .desktop directories, and fall back to the class itself.
+    """
+    if desktop_file_name:
+        return Path(desktop_file_name).stem
+    if not resource_class:
+        return ""
+    key = resource_class.lower()
+    if key in _resolve_cache:
+        return _resolve_cache[key]
+    found = _search_desktop_files(resource_class)
+    _resolve_cache[key] = found
+    return found
+
+
+def _search_desktop_files(resource_class: str) -> str:
+    want = resource_class.lower()
+    for directory in DESKTOP_DIRS:
+        try:
+            entries = sorted(os.listdir(directory))
+        except OSError:
+            continue
+        for name in entries:
+            if not name.endswith(".desktop"):
+                continue
+            base = name[: -len(".desktop")]
+            # "us.zoom.Zoom" also answers to "zoom"
+            if base.rsplit(".", 1)[-1].lower() == want:
+                return base
+            if (_startup_wm_class(Path(directory) / name) or "").lower() == want:
+                return base
+    return resource_class
+
+
+def _startup_wm_class(path: Path) -> str | None:
+    """Read StartupWMClass without configparser's fussiness about .desktop files."""
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return None
+    in_entry = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_entry = stripped.lower() == "[desktop entry]"
+            continue
+        if in_entry and stripped.lower().startswith("startupwmclass"):
+            _, _, value = stripped.partition("=")
+            return value.strip()
+    return None
+
+
+# -- the watcher ---------------------------------------------------------------
+
+class Watcher:
+    """Owns the D-Bus service the KWin script calls, and applies the rules."""
+
+    def __init__(self, rules: AppRules | None = None, on_focus=None):
+        self.rules = rules or AppRules.load()
+        self.on_focus = on_focus or self._apply
+        self.last_app: str | None = None
+        self.last_caption = ""
+        self._loop = None
+        self._bus = None
+        self._thread: threading.Thread | None = None
+        self._script_id: int | None = None
+
+    # -- lifecycle -------------------------------------------------------------
+    def start(self) -> bool:
+        """Register the service and load the KWin script. False if kde or Gio is missing."""
+        try:
+            import gi
+
+            gi.require_version("Gio", "2.0")
+            from gi.repository import Gio, GLib
+        except (ImportError, ValueError) as e:
+            log.info("application profiles need PyGObject (%s); not watching windows", e)
+            return False
+        if not os.environ.get("XDG_CURRENT_DESKTOP", "").lower().startswith(("kde", "plasma")):
+            log.info("application profiles are implemented for KDE; this desktop is %s",
+                     os.environ.get("XDG_CURRENT_DESKTOP") or "unknown")
+            return False
+
+        self._Gio, self._GLib = Gio, GLib
+        self._bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        info = Gio.DBusNodeInfo.new_for_xml(SERVICE_XML)
+        self._bus.register_object(OBJECT, info.interfaces[0], self._call, None, None)
+
+        def owned(*_a):
+            self._load_kwin_script()
+
+        Gio.bus_own_name_on_connection(self._bus, SERVICE, Gio.BusNameOwnerFlags.NONE, owned, None)
+        self._loop = GLib.MainLoop()
+        self._thread = threading.Thread(target=self._loop.run, name="app-watch", daemon=True)
+        self._thread.start()
+        log.info("watching window focus for application profiles")
+        return True
+
+    def stop(self) -> None:
+        if self._loop is not None:
+            self._loop.quit()
+            self._loop = None
+        self._unload_kwin_script()
+        self._bus = None
+
+    # -- KWin script -----------------------------------------------------------
+    def script_path(self) -> Path:
+        return Path(__file__).resolve().parent.parent.parent / "data" / "kwin" / "logi-ghub-focus.js"
+
+    def _load_kwin_script(self) -> None:
+        path = self.script_path()
+        if not path.exists():
+            log.warning("the KWin script is missing at %s; application profiles stay off", path)
+            return
+        result = self._kwin("loadScript", path=str(path), plugin="logi-ghub-focus")
+        if result is None:
+            return
+        self._script_id = result
+        self._kwin("start")
+
+    def _unload_kwin_script(self) -> None:
+        if self._script_id is not None:
+            try:
+                self._kwin("unloadScript", plugin="logi-ghub-focus")
+            finally:
+                self._script_id = None
+
+    def _kwin(self, method: str, **kwargs):
+        """Call a method of org.kde.kwin.Scripting, returning its first reply value."""
+        Gio, GLib = self._Gio, self._GLib
+        args = []
+        for name, value in kwargs.items():
+            args.append(GLib.Variant("s", value) if name in ("path", "plugin") else GLib.Variant("i", value))
+        try:
+            reply = self._bus.call_sync(
+                "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting", method,
+                GLib.Variant(f"({'s' * len(args)})", tuple(args)) if args else None,
+                GLib.VariantType.new("(i)" if method == "loadScript" else "()"),
+                Gio.DBusCallFlags.NONE, 3000, None)
+        except GLib.Error as e:
+            log.info("KWin scripting refused %s: %s", method, e.message)
+            return None
+        values = reply.unpack()
+        return values[0] if values else None
+
+    # -- D-Bus method ----------------------------------------------------------
+    def _call(self, _conn, _sender, _path, _iface, method, params, _invocation):
+        if method == "focusChanged":
+            resource_class, caption, desktop_name = params.unpack()
+            self.focus_changed(resource_class, caption, desktop_name)
+        elif method == "focusLost":
+            self.focus_changed("", "", "")
+        return None
+
+    def focus_changed(self, resource_class: str, caption: str, desktop_name: str = "") -> None:
+        """A window took focus: work out which profile each device should run."""
+        if not self.rules.enabled:
+            return
+        if not resource_class:
+            self.last_app = None
+            return
+        if resource_class.lower() in IGNORED:
+            return
+        app_id = resolve_app_id(resource_class, desktop_name)
+        if app_id == self.last_app and caption == self.last_caption:
+            return
+        self.last_app, self.last_caption = app_id, caption
+        self.on_focus(app_id, caption)
+
+    # -- applying --------------------------------------------------------------
+    def _apply(self, app_id: str, caption: str) -> None:
+        from . import profiles
+
+        active = profiles.get_active()
+        # Nothing to do when no rule and no default names a device: the daemon
+        # leaves devices without an active profile alone, and a rules file that
+        # only carries defaults must not switch devices by itself.
+        targets = set(active) | self.rules.devices()
+        if not targets:
+            return
+        wanted: dict[str, str] = {}
+        for device in targets:
+            name = self.rules.profile_for(device, app_id, caption)
+            if name is None or active.get(device) == name:
+                continue
+            if not profile_exists(device, name):
+                # A rule pointing at a deleted profile would switch the device to
+                # nothing at all; keep the current profile and say so.
+                log.warning("window %r: no profile %r for %s; leaving it as it is",
+                            app_id, name, device)
+                continue
+            wanted[device] = name
+        if not wanted:
+            return
+        for device, name in wanted.items():
+            profiles.set_active(device, name)
+        log.info("window %r: switched %s", app_id,
+                 ", ".join(f"{d} -> {p}" for d, p in sorted(wanted.items())))
+
+
+def profile_exists(device: str, name: str) -> bool:
+    from . import profiles
+
+    return any(p.name == name for p in profiles.list_profiles(device))
+
+
+def kwin_available() -> bool:
+    """Whether this session can host the watcher at all."""
+    if not os.environ.get("XDG_CURRENT_DESKTOP", "").lower().startswith(("kde", "plasma")):
+        return False
+    if shutil.which("busctl") is None and shutil.which("dbus-send") is None:
+        return True  # Gio still works
+    tool = "busctl" if shutil.which("busctl") else "dbus-send"
+    try:
+        if tool == "busctl":
+            probe = subprocess.run(["busctl", "--user", "status", "org.kde.KWin"], capture_output=True, timeout=5)
+        else:
+            probe = subprocess.run(["dbus-send", "--session", "--print-reply", "--dest=org.kde.KWin",
+                                    "/Scripting", "org.freedesktop.DBus.Introspectable.Introspect"],
+                                   capture_output=True, timeout=5)
+        return probe.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
