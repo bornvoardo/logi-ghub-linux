@@ -244,6 +244,10 @@ class Watcher:
         self.last_app: str | None = None
         self.last_caption = ""
         self.reason = "not started"
+        try:
+            self._rules_mtime = rules_path().stat().st_mtime_ns
+        except OSError:
+            self._rules_mtime = 0
         self._loop = None
         self._bus = None
         self._thread: threading.Thread | None = None
@@ -357,8 +361,25 @@ class Watcher:
             self.focus_changed("", "", "")
         return None
 
+    def reload_rules(self) -> None:
+        """Pick up an edited rules file without restarting the service.
+
+        The rules were read once in __init__, so a rule added from the app did
+        nothing until the service was restarted: the file changed, the rules in
+        memory did not.
+        """
+        try:
+            mtime = rules_path().stat().st_mtime_ns
+        except OSError:
+            mtime = 0
+        if mtime == self._rules_mtime:
+            return
+        self._rules_mtime = mtime
+        self.rules = AppRules.load()
+
     def focus_changed(self, resource_class: str, caption: str, desktop_name: str = "") -> None:
         """A window took focus: work out which profile each device should run."""
+        self.reload_rules()
         if not self.rules.enabled:
             return
         if not resource_class:

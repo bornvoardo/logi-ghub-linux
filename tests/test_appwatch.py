@@ -139,6 +139,42 @@ class TestResolveAppId:
         assert not appwatch.Rule("org.kde", "terminal").matches(app_id, "")
 
 
+class TestRuleReload:
+    def test_a_rule_added_after_start_is_picked_up(self, rules_file):
+        """The rules were read once in __init__, so a rule added from the app did
+        nothing until the service was restarted."""
+        rules_file.parent.mkdir(parents=True, exist_ok=True)
+        rules_file.write_text('{"rules": [], "defaults": {}}')
+        seen = []
+        w = appwatch.Watcher(on_focus=lambda a, c: seen.append(a))
+        assert w.rules.rules == []
+
+        rules = appwatch.AppRules()
+        rules.add("firefox", "web", "046d:c359")
+        rules.save()
+        import os as _os
+        st = rules_file.stat()
+        _os.utime(rules_file, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+
+        w.focus_changed("firefox", "Mail")
+        assert len(w.rules.rules) == 1
+        assert seen == ["firefox"]
+
+    def test_an_unchanged_file_is_not_reloaded(self, rules_file):
+        rules_file.parent.mkdir(parents=True, exist_ok=True)
+        rules_file.write_text('{"rules": [{"match": "firefox", "profile": "web", "device": null, "title": null}], "defaults": {}}')
+        w = appwatch.Watcher(on_focus=lambda a, c: None)
+        first = w.rules
+        w.reload_rules()
+        assert w.rules is first  # same object: nothing was re-read
+
+    def test_a_missing_rules_file_is_not_an_error(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        w = appwatch.Watcher(on_focus=lambda a, c: None)
+        w.reload_rules()
+        assert w.rules.rules == []
+
+
 class TestFocus:
     def test_the_shell_is_ignored(self):
         w = appwatch.Watcher(appwatch.AppRules(), on_focus=lambda *a: pytest.fail("should not fire"))
