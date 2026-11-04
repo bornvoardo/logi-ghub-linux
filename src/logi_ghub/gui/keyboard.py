@@ -94,6 +94,37 @@ class KeyboardView(Gtk.Widget):
             self._last_painted = zone
             self.on_paint(zone)
 
+    # -- ISO Enter -------------------------------------------------------------
+    def iso_enter_pieces(self) -> list:
+        """The Enter keycaps of an L-shaped Enter, or an empty list."""
+        return [c for c in self.caps if c.name == "Enter"] if sum(1 for c in self.caps if c.name == "Enter") > 1 else []
+
+    def enter_margins(self, c, unit: float) -> tuple[float, float, float, float]:
+        """Gaps (left, top, right, bottom) around one piece of the L-shaped Enter.
+
+        Every key is drawn with a gap on all four sides. Between the two pieces
+        of one key that gap would make them look like two keys, so a side that
+        touches another piece of the same key gets no gap.
+        """
+        g = self.GAP * unit
+        pieces = self.iso_enter_pieces()
+        left = top = right = bottom = g / 2
+        for o in pieces:
+            if o is c:
+                continue
+            same_row = abs(o.y - c.y) < 1e-6
+            below = abs(o.y - (c.y + c.h)) < 1e-6
+            above = abs(o.y + o.h - c.y) < 1e-6
+            if same_row and abs(o.x - (c.x + c.w)) < 1e-6:
+                right = 0.0
+            elif same_row and abs(o.x + o.w - c.x) < 1e-6:
+                left = 0.0
+            elif below and o.x <= c.x < o.x + o.w:
+                bottom = 0.0
+            elif above and c.x <= o.x < c.x + c.w:
+                top = 0.0
+        return left, top, right, bottom
+
     def _drag(self, _g, dx: float, dy: float):
         if not self.paint_on_drag:
             return
@@ -174,6 +205,7 @@ class KeyboardView(Gtk.Widget):
                     snapshot.append_color(_rgba(1, 1, 1, 0.07), Graphene.Rect().init(x + w * 0.12, y + h * i / 9, w * 0.76, 1))
         font = Pango.FontDescription.from_string(f"Sans {max(6, int(unit * 0.24))}")
         logo_font = Pango.FontDescription.from_string(f"Sans Bold {max(8, int(unit * 0.62))}")
+        iso_enter = self.iso_enter_pieces()
         for c in self.caps:
             rgb = self.colors.get(c.zone)
             lit = rgb is not None and rgb != 0
@@ -183,12 +215,20 @@ class KeyboardView(Gtk.Widget):
             if c.name == "Logo":
                 self._legend(snapshot, "G", logo_font, x, y, w, h, legend, lit)
                 continue
-            if c.round:
-                self._box(snapshot, x, y, w, h, w / 2, CAP, CAP_EDGE)
-            elif c.name == "Enter" and len(self.caps) > 1 and sum(1 for k in self.caps if k.name == "Enter") > 1:
-                # ISO Enter: one key made of two rectangles. No legend; the shape
-                # may be drawn as several pieces, so the inset is skipped.
+            if c.name == "Enter" and iso_enter:
+                # ISO Enter: one key drawn as two rectangles. The shared edge gets
+                # no gap, so the two pieces read as the single L-shaped key it is.
+                left, top, right, bottom = self.enter_margins(c, unit)
+                x = px(c.x) + left
+                y = py(c.y) + top
+                w = c.w * unit - left - right
+                h = c.h * unit - top - bottom
                 self._box(snapshot, x, y, w, h, 0.12 * unit, CAP, CAP_EDGE)
+                inset = 0.07 * unit
+                self._box(snapshot, x + inset, y + inset * 0.6, w - 2 * inset, h - 2 * inset * 0.6,
+                          0.1 * unit, CAP_TOP)
+            elif c.round:
+                self._box(snapshot, x, y, w, h, w / 2, CAP, CAP_EDGE)
             else:
                 self._box(snapshot, x, y, w, h, 0.12 * unit, CAP, CAP_EDGE)
                 inset = 0.07 * unit  # the keycap's top face

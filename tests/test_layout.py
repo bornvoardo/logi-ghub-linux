@@ -63,12 +63,14 @@ def test_full_size_has_the_navigation_cluster():
 
 
 def test_full_size_has_the_iso_keys():
-    """Measured on the keyboard: three keys between L and Enter, one before Z."""
+    """Measured on the keyboard: three keys between L and Enter, none before Z."""
     caps = {c.name: c for c in layout.keycaps(layout="full")}
     assert caps["NonUSHash"].zone == 47
-    assert caps["NonUSBackslash"].zone == 97
-    # # ~ sits between the apostrophe and the Enter, the other two follow it
+    # # ~ sits between the apostrophe and the Enter
     assert caps["Apostrophe"].x < caps["NonUSHash"].x < 13.5
+    # this board has no key between LeftShift and Z
+    assert "NonUSBackslash" not in caps
+    assert caps["LeftShift"].w == 2.25
 
 
 def test_full_size_enter_is_l_shaped():

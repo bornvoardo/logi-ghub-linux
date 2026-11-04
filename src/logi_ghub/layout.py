@@ -74,8 +74,9 @@ MAIN_ROWS: list[list[tuple[str | None, float]]] = [
      ("Menu", 1.25), ("RightCtrl", 1.25)],
 ]
 
-# The ISO variant of the same board: three keys between L and Enter (# ~, ; :, ' @),
-# a one-unit key between LeftShift and Z (< > |), and an L-shaped Enter.
+# The ISO variant of the same board: three keys between L and Enter (# ~, ; :, ' @)
+# and an L-shaped Enter. This board has no extra key before Z (measured: the
+# keyboard has no key between LeftShift and Z).
 # The rows stop before Enter; ISO_ENTER draws the two rectangles of the L.
 ISO_MAIN_ROWS: list[list[tuple[str | None, float]]] = [
     MAIN_ROWS[0],
@@ -84,7 +85,7 @@ ISO_MAIN_ROWS: list[list[tuple[str | None, float]]] = [
      ("LeftBracket", 1), ("RightBracket", 1)],
     [("CapsLock", 1.75), ("A", 1), ("S", 1), ("D", 1), ("F", 1), ("G", 1), ("H", 1), ("J", 1), ("K", 1), ("L", 1),
      ("Semicolon", 1), ("Apostrophe", 1), ("NonUSHash", 1)],
-    [("LeftShift", 1.25), ("NonUSBackslash", 1), ("Z", 1), ("X", 1), ("C", 1), ("V", 1), ("B", 1), ("N", 1), ("M", 1),
+    [("LeftShift", 2.25), ("Z", 1), ("X", 1), ("C", 1), ("V", 1), ("B", 1), ("N", 1), ("M", 1),
      ("Comma", 1), ("Dot", 1), ("Slash", 1), ("RightShift", 2.75)],
     MAIN_ROWS[5],
 ]
