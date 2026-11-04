@@ -181,6 +181,34 @@ class ActionDialog(Adw.Dialog):
         code = self.special_codes[self.special_row.get_selected()]
         self.profile_row.set_visible(kind == "special" and code == 0x0D)
         self.macro_row.set_visible(kind == "macro")
+        self._fit()
+
+    def _fit(self):
+        """Size the dialog to the rows it is showing.
+
+        The page is a scrolled view, so it reports a small natural height and the
+        dialog kept the size of its first layout: choosing "key" showed two more
+        rows inside a window that did not grow. The height is computed from the
+        visible rows instead, and clamped so a long list still scrolls.
+        """
+        ROW = 56          # an Adwaita row with a title and a control
+        GROUP_TITLE = 38  # the space a titled group adds above its rows
+        CHROME = 96       # header bar plus page margins
+
+        rows = 1  # the action chooser is always there
+        groups = 1
+        for w in (self.mouse_row, self.key_row, self.key_list_row,
+                  self.consumer_row, self.special_row, self.profile_row, self.macro_row):
+            if w.get_visible():
+                rows += 1
+        if self.mods_group.get_visible():
+            groups += 1
+            rows += len(self.mod_rows)
+
+        height = CHROME + rows * ROW + groups * GROUP_TITLE
+        height = max(220, min(height, 620))
+        if self.get_content_height() != height:
+            self.set_content_height(height)
 
     def _ok(self, *_):
         kind = self.kinds[self.kind_row.get_selected()][0]
