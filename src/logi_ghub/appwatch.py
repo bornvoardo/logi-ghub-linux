@@ -122,6 +122,10 @@ class AppRules:
     rules: list[Rule] = field(default_factory=list)
     defaults: dict[str, str] = field(default_factory=dict)
     enabled: bool = True
+    # How to announce a switch to the default profile. The default is not a rule, so
+    # it has no notify/silent of its own; these carry the same two answers per device.
+    default_notify: dict[str, bool] = field(default_factory=dict)
+    default_silent: dict[str, bool] = field(default_factory=dict)
 
     # -- disk ------------------------------------------------------------------
     @classmethod
@@ -148,12 +152,18 @@ class AppRules:
             except (KeyError, TypeError):
                 log.warning("skipping a malformed rule: %r", entry)
         defaults = {str(k): str(v) for k, v in (data.get("defaults") or {}).items()}
-        return cls(rules, defaults, bool(data.get("enabled", True)))
+        return cls(rules, defaults, bool(data.get("enabled", True)),
+                   {str(k): bool(v) for k, v in (data.get("default_notify") or {}).items()},
+                   {str(k): bool(v) for k, v in (data.get("default_silent") or {}).items()})
 
     def save(self, path: Path | None = None) -> Path:
         path = path or rules_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         body = {"enabled": self.enabled, "rules": [asdict(r) for r in self.rules], "defaults": dict(self.defaults)}
+        if self.default_notify:
+            body["default_notify"] = dict(self.default_notify)
+        if self.default_silent:
+            body["default_silent"] = dict(self.default_silent)
         path.write_text(json.dumps(body, indent=2) + "\n")
         return path
 
@@ -637,10 +647,15 @@ class Watcher:
             # window that ended the previous rule is not what chose it: naming it
             # there read as "chosen for <the app you just left>".
             labels[device] = rule.display_name(app_id) if rule is not None else ""
-            # A switch back to the default has no rule of its own; it keeps the
-            # default settings rather than borrowing the last rule's.
-            announce[device] = rule.notify if rule is not None else True
-            quiet[device] = rule.silent if rule is not None else True
+            # A switch back to the default has no rule of its own; it uses the
+            # notification settings kept for the default rather than borrowing the
+            # last rule's.
+            if rule is not None:
+                announce[device] = rule.notify
+                quiet[device] = rule.silent
+            else:
+                announce[device] = self.rules.default_notify.get(device, True)
+                quiet[device] = self.rules.default_silent.get(device, True)
         if not wanted:
             return
         for device, name in wanted.items():

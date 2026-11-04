@@ -658,6 +658,17 @@ class DevicePane(Gtk.Box):
             menu = Gio.Menu()
             for p in self.slots:
                 menu.append(f"Write to on-board slot {p.sector}", f"pane.write-slot::{prof.name}\x1f{p.sector}")
+            if locked:
+                # The default is not a rule, so it has no row of its own in the
+                # rules list; its two notification answers live here instead.
+                from .. import appwatch as _aw
+                _rules = _aw.AppRules.load()
+                _on = _rules.default_notify.get(self.dev.key, True)
+                _quiet = _rules.default_silent.get(self.dev.key, True)
+                menu.append(f"Notify on switch: {'on' if _on else 'off'}",
+                            f"pane.set-default-choice::notify\x1f{0 if _on else 1}")
+                menu.append(f"Silent: {'on' if _quiet else 'off'}",
+                            f"pane.set-default-choice::silent\x1f{0 if _quiet else 1}")
             if not locked:
                 # The default profile is the device's fallback: deleting it would
                 # leave nothing to fall back to, so the entry is not offered.
@@ -731,7 +742,22 @@ class DevicePane(Gtk.Box):
         a = Gio.SimpleAction.new("delete-profile", GLib.VariantType.new("s"))
         a.connect("activate", lambda _a, v: self.delete_profile(v.get_string()))
         group.add_action(a)
+        a = Gio.SimpleAction.new("set-default-choice", GLib.VariantType.new("s"))
+        a.connect("activate", lambda _a, v: self._set_default_choice(*v.get_string().split("\x1f")))
+        group.add_action(a)
         self.insert_action_group("pane", group)
+
+    def _set_default_choice(self, which: str, value: str):
+        """Record how a switch back to the default profile is announced."""
+        from .. import appwatch
+
+        rules = appwatch.AppRules.load()
+        target = rules.default_notify if which == "notify" else rules.default_silent
+        target[self.dev.key] = value == "1"
+        rules.save()
+        self.toast(f"Default profile: {'notifications on' if value == '1' else 'notifications off'}"
+                   if which == "notify" else
+                   f"Default profile: {'silent' if value == '1' else 'with sound'}")
 
     def switch_target(self, fn):
         if self.dirty:
