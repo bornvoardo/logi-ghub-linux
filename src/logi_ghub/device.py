@@ -36,6 +36,7 @@ MODELS: dict[str, Model] = {
     "046d:4099": Model("G502 X PLUS", "mouse", _G502X_BUTTONS),
     "046d:c095": Model("G502 X PLUS (USB)", "mouse", _G502X_BUTTONS),
     "046d:40b6": Model("G915 X LIGHTSPEED TKL", "keyboard", []),
+    "046d:c359": Model("G915 X (wired)", "keyboard", []),
 }
 
 
