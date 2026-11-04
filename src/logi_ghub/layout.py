@@ -171,7 +171,6 @@ FULL_TOP_ROW: list[tuple[str, float, float]] = [
 ]
 FULL_DECOR: list[tuple[str, float, float, float, float]] = [
     ("button", 6.4, TOP_Y, 0.8, 0.8),          # game mode, left of the media keys of the strip
-    ("roller", 22.75, TOP_Y - 0.2, 1.45, 1.05),
 ]
 FULL = KeyboardLayout(
     "full", ISO_MAIN_ROWS, FULL_TOP_ROW, FULL_DECOR,

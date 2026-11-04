@@ -45,8 +45,8 @@ def test_keys_without_an_entry_show_their_name():
 
 
 def test_the_full_size_strip_has_no_badge_or_extra_buttons():
-    """The board has no LIGHTSPEED badge and no three buttons to its right."""
+    """The board has no LIGHTSPEED badge, no three buttons next to it, no roller."""
     kinds = [kind for kind, *_rest in layout.FULL.decor]
     assert "badge" not in kinds
-    assert kinds.count("button") == 1  # game mode only
-    assert kinds.count("roller") == 1
+    assert "roller" not in kinds
+    assert kinds == ["button"]  # game mode only
