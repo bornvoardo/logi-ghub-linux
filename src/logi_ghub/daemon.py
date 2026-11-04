@@ -351,10 +351,7 @@ class Session:
         if self.spy is None:
             return
         try:
-            table = self._remap_table()
-            log.info("%s: remapping table %s (layer %s, count %s)", self.dev.name, table, self.gshift,
-                     self.spy.count)
-            self.spy.set_remapping(table)
+            self.spy.set_remapping(self._remap_table())
         except (HIDPPError, DeviceOffline, TimeoutError, OSError) as e:
             log.info("%s: could not update the button remapping: %s", self.dev.name, e)
 
@@ -403,7 +400,6 @@ class Session:
         a = self.action_for(i)
         self.pressed[i] = a
         k = a.kind
-        log.info("%s: button %s pressed -> %s (layer %s)", self.dev.name, i, a.label(), self.gshift)
         codes: list[int] = []
         if k == "mouse":
             if self._remap_table()[i] == 0:
