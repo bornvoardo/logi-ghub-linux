@@ -1141,19 +1141,24 @@ class DevicePane(Gtk.Box):
             self.toast(f"The {layout_label(name)} key is handled inside the keyboard and can't be reassigned")
             return
         p = self.profile
-        layer = p.gshift_key_actions if gshift else p.key_actions
-        current = layer.get(name, Action("default"))
+        plain = p.key_actions.get(name, Action("default"))
+        second = p.gshift_key_actions.get(name, Action("default"))
 
-        def done(a: Action):
-            if a.kind == "default":
-                layer.pop(name, None)
-            else:
-                layer[name] = a
+        def done(a: Action, b: Action):
+            for layer, act in ((p.key_actions, a), (p.gshift_key_actions, b)):
+                if act.kind == "default":
+                    layer.pop(name, None)
+                else:
+                    layer[name] = act
             self.mark_dirty()
             self.build_buttons()
 
-        title = f"{layout_label(name)} (G-Shift)" if gshift else layout_label(name)
-        ActionDialog(title, current, [m.name for m in p.macros], done).present(self.win)
+        # The dialog opens on the layer the click came from, and can switch to the
+        # other one without a second visit.
+        dialog = ActionDialog(layout_label(name), plain, [m.name for m in p.macros], done, second=second)
+        if gshift and dialog.layer_row is not None:
+            dialog.layer_row.set_selected(1)
+        dialog.present(self.win)
 
     def reset_key(self, name: str, gshift: bool = False):
         layer = self.profile.gshift_key_actions if gshift else self.profile.key_actions

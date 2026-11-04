@@ -69,10 +69,25 @@ class ChordCapture(Gtk.Button):
 
 
 class ActionDialog(Adw.Dialog):
-    def __init__(self, title: str, action: Action, macros: list[str], on_done, allow_default: bool = True):
+    """What a button or key does — in both layers, when the caller has both.
+
+    A key has two readings: the plain one, and the one while the G-Shift key is
+    held. Editing them in two separate dialogs hid the relationship: the page
+    opened the first layer, so the second could only be reached from the list
+    below it. When ``second`` is given, the dialog carries a layer chooser and
+    returns both actions, so one visit sets both readings of the same key.
+    """
+
+    def __init__(self, title: str, action: Action, macros: list[str], on_done, allow_default: bool = True,
+                 second: Action | None = None):
         super().__init__(title=title, content_width=460)
         self.on_done = on_done
         self.action = Action.from_dict(action.to_dict())
+        # Always an Action, so the rows below never have to guard for None;
+        # has_layers says whether the chooser is shown at all.
+        self.second = Action.from_dict(second.to_dict()) if second is not None else Action("default")
+        self.has_layers = second is not None
+        self.layer = False  # False: the plain layer, True: the G-Shift layer
         self.kinds = [k for k in KIND_LABELS if allow_default or k[0] != "default"]
         toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar(show_end_title_buttons=False, show_start_title_buttons=False)
@@ -89,6 +104,15 @@ class ActionDialog(Adw.Dialog):
         page.add(group)
         toolbar.set_content(page)
         self.set_child(toolbar)
+
+        # The chooser sits above the action rows, so it reads as "which reading am
+        # I editing" rather than as another property of the action.
+        self.layer_row: Adw.ComboRow | None = None
+        if self.has_layers:
+            row = Adw.ComboRow(title="Layer", model=_string_list(["Normal", "G-Shift (while held)"]))
+            row.connect("notify::selected", self._layer_changed)
+            group.add(row)
+            self.layer_row = row
 
         self.kind_row = Adw.ComboRow(title="Action", model=_string_list([l for _, l in self.kinds]))
         group.add(self.kind_row)
@@ -129,6 +153,49 @@ class ActionDialog(Adw.Dialog):
         self._load()
         self.kind_row.connect("notify::selected", lambda *_: self._sync())
         self.special_row.connect("notify::selected", lambda *_: self._sync())
+        self._sync()
+
+    def _layer_changed(self, *_):
+        """Switch which reading the rows below show.
+
+        The edits of the reading being left are kept, so a click between the two
+        layers never loses work: _remember() stores the current rows first.
+        """
+        self._remember()
+        self.layer = bool(self.layer_row.get_selected()) if self.layer_row is not None else False
+        self.action, self.second = self.second, self.action
+        self._load_full()
+        self._sync()
+
+    def _remember(self):
+        """Store what the visible rows say into the reading being edited."""
+        if not self.has_layers:
+            return
+        kind = self.kinds[self.kind_row.get_selected()][0]
+        if kind == "mouse":
+            a = Action.mouse(self.mouse_row.get_selected() + 1)
+        elif kind == "key":
+            key = self.action.key or keys.hid_for(keys.KEY_NAMES[self.key_list_row.get_selected()])
+            a = Action("key", modifiers=self.action.modifiers, key=key)
+        elif kind == "consumer":
+            a = Action.consumer(keys.CONSUMER_NAMES[self.consumer_row.get_selected()])
+        elif kind == "special":
+            code = self.special_codes[self.special_row.get_selected()]
+            a = Action.special(code, int(self.profile_row.get_value()) if code == 0x0D else 0)
+        elif kind == "macro":
+            if not self.macros:
+                return
+            a = Action.run_macro(self.macros[self.macro_row.get_selected()])
+        else:
+            a = Action(kind)
+        if self.layer:
+            self.second = a
+        else:
+            self.action = a
+
+    def _load_full(self):
+        """Fill every row from the current reading, not just the ones it uses."""
+        self._load()
         self._sync()
 
     def _load(self):
@@ -196,6 +263,8 @@ class ActionDialog(Adw.Dialog):
         CHROME = 96       # header bar plus page margins
 
         rows = 1  # the action chooser is always there
+        if self.has_layers:
+            rows += 1
         groups = 1
         for w in (self.mouse_row, self.key_row, self.key_list_row,
                   self.consumer_row, self.special_row, self.profile_row, self.macro_row):
@@ -229,8 +298,20 @@ class ActionDialog(Adw.Dialog):
             a = Action.run_macro(self.macros[self.macro_row.get_selected()])
         else:
             a = Action(kind)
-        self.on_done(a)
+        if self.has_layers:
+            # Both readings go back, so the page can write both without opening a
+            # second dialog. The plain reading is always first.
+            self._remember_final(a)
+            self.on_done(self.action, self.second)
+        else:
+            self.on_done(a)
         self.close()
+
+    def _remember_final(self, a: Action) -> None:
+        if self.layer:
+            self.second = a
+        else:
+            self.action = a
 
 
 class MacroDialog(Adw.Dialog):
