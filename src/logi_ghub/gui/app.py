@@ -309,6 +309,120 @@ class DevicePane(Gtk.Box):
         self.build_info()
         self.update_banner()
 
+    def build_app_rules(self):
+        """Default profile and window bindings for this device."""
+        from .. import appwatch
+
+        dev = self.dev
+        rules = appwatch.AppRules.load()
+        names = [p.name for p in profiles.list_profiles(dev.key)]
+        if not names:
+            return
+
+        g = self.add_group("profiles", Adw.PreferencesGroup(
+            title="By application",
+            description="When a window with one of these classes takes focus, the device runs that profile. "
+                        "Switching is done by the logi-ghubd service (restart it after changing the on/off switch)."))
+        on = Gtk.Switch(active=rules.enabled, valign=Gtk.Align.CENTER,
+                        tooltip_text="Switch profiles when the focused window changes")
+        on.connect("notify::active", lambda s, _p: self._set_app_rules_enabled(s.get_active()))
+        row = Adw.ActionRow(title="Switch automatically", subtitle="Needs a KDE session")
+        row.add_suffix(on)
+        g.add(row)
+
+        choices = Gtk.StringList()
+        choices.append("No default")
+        for name in names:
+            choices.append(name)
+        default_row = Adw.ComboRow(title="Default profile", model=choices,
+                                   subtitle="Used when no application rule matches")
+        current = rules.defaults.get(dev.key)
+        default_row.set_selected(names.index(current) + 1 if current in names else 0)
+        default_row.connect("notify::selected", lambda r, _p: self._set_app_default(names, r.get_selected()))
+        g.add(default_row)
+
+        mine = [r for r in rules.rules if r.device in (None, dev.key)]
+        if not mine:
+            g.add(Adw.ActionRow(title="No applications yet",
+                                subtitle="Add a window class below, for example 'steam_app_*' or 'firefox'."))
+        for rule in mine:
+            scope = "every device" if rule.device is None else dev.key
+            row = Adw.ActionRow(title=GLib.markup_escape_text(rule.match),
+                                subtitle=GLib.markup_escape_text(f"{rule.profile} · {scope}"
+                                                                 + (f" · title has {rule.title!r}" if rule.title else "")))
+            rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"])
+            rm.connect("clicked", lambda _b, m=rule.match, d=rule.device: self._remove_app_rule(m, d))
+            row.add_suffix(rm)
+            g.add(row)
+
+        add = Gtk.Button(label="Add application", valign=Gtk.Align.CENTER)
+        add.connect("clicked", lambda *_: self._add_app_rule(names))
+        g.set_header_suffix(add)
+
+    def _set_app_rules_enabled(self, on: bool):
+        from .. import appwatch
+
+        rules = appwatch.AppRules.load()
+        rules.enabled = on
+        rules.save()
+        self.toast("Application profiles on" if on else "Application profiles off")
+
+    def _set_app_default(self, names: list[str], selected: int):
+        from .. import appwatch
+
+        rules = appwatch.AppRules.load()
+        if selected == 0:
+            rules.defaults.pop(self.dev.key, None)
+            self.toast("No default profile")
+        else:
+            rules.defaults[self.dev.key] = names[selected - 1]
+            self.toast(f"Default profile: {names[selected - 1]}")
+        rules.save()
+
+    def _remove_app_rule(self, match: str, device: str | None):
+        from .. import appwatch
+
+        rules = appwatch.AppRules.load()
+        rules.remove(match, device)
+        rules.save()
+        self.build_profiles()
+
+    def _add_app_rule(self, names: list[str]):
+        from .. import appwatch
+
+        dev = self.dev
+        d = Adw.AlertDialog(heading="Add an application",
+                            body="The window class KWin reports, a wildcard is allowed (steam_app_*, firefox).")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        match = Adw.EntryRow(title="Window class")
+        box.append(match)
+        picker = Adw.ComboRow(title="Profile", model=Gtk.StringList.new(names))
+        box.append(picker)
+        everywhere = Adw.SwitchRow(title="Every device", subtitle=f"Off: only {dev.name}",
+                                   active=True)
+        box.append(everywhere)
+        d.set_extra_child(box)
+        d.add_response("cancel", "Cancel")
+        d.add_response("add", "Add")
+        d.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
+        d.set_default_response("add")
+
+        def resp(_d, r):
+            if r != "add":
+                return
+            pattern = match.get_text().strip()
+            if not pattern:
+                self.toast("Give a window class")
+                return
+            rules = appwatch.AppRules.load()
+            rules.add(pattern, names[picker.get_selected()], None if everywhere.get_active() else dev.key)
+            rules.save()
+            self.build_profiles()
+            self.toast(f"{pattern} → {names[picker.get_selected()]}")
+
+        d.connect("response", resp)
+        d.present(self.win)
+
     # -- profiles page ------------------------------------------------------------------
     def build_profiles(self):
         self.page_reset("profiles")
@@ -375,6 +489,9 @@ class DevicePane(Gtk.Box):
                                  subtitle="Host-mode profiles only work while it runs. Start it with: systemctl --user enable --now logi-ghubd")
             warn.add_prefix(Gtk.Image.new_from_icon_name("dialog-warning-symbolic"))
             g.add(warn)
+
+        if dev.hidpp is not None:
+            self.build_app_rules()
 
         if dev.onboard:
             g = self.add_group("profiles", Adw.PreferencesGroup(
