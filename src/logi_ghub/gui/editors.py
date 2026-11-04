@@ -345,11 +345,18 @@ class MacroDialog(Adw.Dialog):
         self.close()
 
 
-def confirm(parent, heading: str, body: str, action_label: str, on_yes, destructive: bool = False):
+def confirm(parent, heading: str, body: str, action_label: str, on_yes, destructive: bool = False, on_no=None):
     d = Adw.AlertDialog(heading=heading, body=body)
     d.add_response("cancel", "Cancel")
     d.add_response("yes", action_label)
     d.set_response_appearance("yes", Adw.ResponseAppearance.DESTRUCTIVE if destructive else Adw.ResponseAppearance.SUGGESTED)
     d.set_default_response("cancel")
-    d.connect("response", lambda _d, r: on_yes() if r == "yes" else None)
+
+    def resp(_d, r):
+        if r == "yes":
+            on_yes()
+        elif on_no is not None:
+            on_no()
+
+    d.connect("response", resp)
     d.present(parent)

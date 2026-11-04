@@ -33,6 +33,9 @@ CSS = """
 .lgl-key { min-height: 26px; min-width: 0; padding: 0 2px; font-size: 0.8em; }
 .lgl-keyboard { padding: 6px; }
 .lgl-dim { opacity: 0.6; }
+/* Unsaved edits: the banner has to be impossible to miss, so it is red and bold
+   rather than the theme's quiet default. */
+.lgl-unsaved { background-color: #c01c28; color: #ffffff; font-weight: bold; }
 """
 
 
@@ -157,10 +160,24 @@ class DevicePane(Gtk.Box):
             return
         kind, ref = self.target
         where = f"on-board slot {ref}" if kind == "slot" else f"computer profile “{ref}”"
-        state = "unsaved changes" if self.dirty else "saved"
-        self.banner.set_title(f"Editing {where}: {self.profile.name} ({state})")
-        self.banner.set_button_label("Save" if self.dirty else "")
         self.banner.set_revealed(True)
+        if self.dirty and self.profile is not None:
+            # Say what will be lost and how to keep it. The daemon reads the saved
+            # file, so an assignment or a macro that is only in the window does
+            # nothing until Save is pressed.
+            extra = ""
+            if kind == "computer":
+                extra = (f" {len(self.profile.key_actions)} key assignment(s) and "
+                         f"{len(self.profile.macros)} macro(s) exist only in this window: "
+                         "the service reads the saved file.")
+            self.banner.set_title(f"UNSAVED CHANGES — {where}.{extra}")
+            self.banner.set_button_label("Save now")
+            self.banner.add_css_class("lgl-unsaved")
+        else:
+            title = self.profile.name if self.profile is not None else ref
+            self.banner.set_title(f"Editing {where}: {title} (saved)")
+            self.banner.set_button_label("")
+            self.banner.remove_css_class("lgl-unsaved")
 
     # -- loading -----------------------------------------------------------------------
     def load(self):
@@ -386,10 +403,26 @@ class DevicePane(Gtk.Box):
 
     def switch_target(self, fn):
         if self.dirty:
-            confirm(self.win, "Discard unsaved changes?", "The profile you are editing has changes that are not saved.",
+            confirm(self.win, "Discard unsaved changes?",
+                    f"“{self.profile.name}” has changes that are not saved. Until you press Save, the "
+                    "service and the device keep using the saved version.",
                     "Discard", fn, destructive=True)
         else:
             fn()
+
+    def close_request(self):
+        """Ask before losing edits the user has not saved yet."""
+        if not self.dirty:
+            return False
+
+        def discard():
+            self.dirty = False
+            self.win.close()
+
+        confirm(self.win, "Discard unsaved changes?",
+                f"“{self.profile.name}” has changes that are not saved. Closing the window loses them.",
+                "Discard and close", discard, destructive=True)
+        return True
 
     def activate_slot(self, slot: int):
         def work():
@@ -1397,9 +1430,19 @@ class MainWindow(Adw.ApplicationWindow):
         self.split.set_content(self.content_page)
         self.panes: dict[str, DevicePane] = {}
         self.rows: dict[int, Adw.ActionRow] = {}
+        self.current_pane: DevicePane | None = None
+        self.current_row: Adw.ActionRow | None = None
+        self.connect("close-request", self._on_close_request)
         self.scan()
         if not fake:
             GLib.timeout_add_seconds(10, self.wake_check)
+
+    def _on_close_request(self, *_args) -> bool:
+        """Block the window from closing while a pane has unsaved edits."""
+        pane = self.current_pane
+        if pane is not None and pane.dirty:
+            return pane.close_request()
+        return False
 
     def wake_check(self) -> bool:
         """Devices that were asleep show up by themselves once they wake (no need to press Refresh)."""
@@ -1484,11 +1527,37 @@ class MainWindow(Adw.ApplicationWindow):
         if row is None:
             return
         dev: LogiDevice = row.get_child().dev if not hasattr(row, "dev") else row.dev
+        # Selecting another device throws away the pane's edits without a word;
+        # ask first, and keep the selection where it was if the user says no.
+        old = getattr(self, "current_pane", None)
+        if old is not None and old is not self.panes.get(dev.info.path) and old.dirty:
+            previous = self.current_row
+
+            def keep():
+                # Put the highlight back where the unsaved pane is, so the list
+                # does not claim a device that was never opened.
+                self.list.handler_block_by_func(self.on_select)
+                if previous is not None:
+                    self.list.select_row(previous)
+                self.list.handler_unblock_by_func(self.on_select)
+
+            def discard(dev=dev, row=row):
+                old.dirty = False
+                self._select_device(dev, row)
+
+            confirm(self.win, "Discard unsaved changes?",
+                    f"“{old.profile.name}” on {old.dev.name} has changes that are not saved.",
+                    "Discard", discard, destructive=True, on_no=keep)
+            return
+        self._select_device(dev, row)
+
+    def _select_device(self, dev: LogiDevice, row=None):
         if not dev.online:
             self.status.set_title(f"{dev.name} is not reachable")
             self.status.set_description(dev.error or "")
             self.content_view.set_content(self.status)
             self.content_header.set_title_widget(None)
+            self.current_pane = None
             return
         pane = self.panes.get(dev.info.path)
         if pane is None:
@@ -1498,6 +1567,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.content_header.set_title_widget(pane.switcher)
         self.content_page.set_title(dev.name)
         self.split.set_show_content(True)
+        self.current_pane = pane
+        self.current_row = row
 
 
 class App(Adw.Application):
