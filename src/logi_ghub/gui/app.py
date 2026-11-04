@@ -19,6 +19,8 @@ from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 from .. import __version__, keyremap, keys, lightfx, profiles  # noqa: E402
 from ..actions import Action  # noqa: E402
 from ..device import LogiDevice, find_devices  # noqa: E402
+from ..device import DeviceOffline  # noqa: E402
+from ..hidpp.protocol import HIDPPError  # noqa: E402
 from ..features import lighting  # noqa: E402
 from ..hidpp import features as F  # noqa: E402
 from ..features import onboard as ob  # noqa: E402
@@ -185,33 +187,57 @@ class DevicePane(Gtk.Box):
 
         def read():
             data = {}
+
+            def attempt(key, fn):
+                """Read one optional piece; a device that refuses must not blank the app.
+
+                load() hands this to run_async, and if read() raises, loaded() is
+                never called and every pane stays empty: one unsupported HID++
+                call would cost the whole window. So each piece stands alone.
+                """
+                try:
+                    data[key] = fn()
+                except (HIDPPError, DeviceOffline, TimeoutError, OSError, ValueError, KeyError) as e:
+                    log.info("could not read %s: %s", key, e)
+
             if dev.onboard:
-                data["slots"] = dev.onboard.read_profiles()
-                data["active"] = dev.onboard.get_current_profile()
-                data["mode"] = dev.onboard.get_mode()
+                attempt("slots", dev.onboard.read_profiles)
+                attempt("active", dev.onboard.get_current_profile)
+                attempt("mode", dev.onboard.get_mode)
             if dev.dpi:
-                data["dpi_values"] = dev.dpi.dpi_list()
+                attempt("dpi_values", dev.dpi.dpi_list)
             if dev.report_rate:
-                data["hz"] = dev.report_rate.supported_hz()
-            if dev.rgb:
-                data["rgb"] = dev.rgb.zones
-            if dev.per_key:
-                data["keys"] = dev.per_key.zones
-            if dev.brightness:
-                data["brightness"] = dev.brightness.get()
-            if isinstance(dev.rgb, lighting.RGBEffects):
-                data["sw_control"] = dev.rgb.get_sw_control()[0]
-                data["onboard_effects"] = dev.rgb.onboard_effect_names()
+                attempt("hz", dev.report_rate.supported_hz)
+            # Bound once: these are cached properties, and inside a lambda the type
+            # narrowing on dev.rgb is lost.
+            rgb = dev.rgb
+            if rgb:
+                attempt("rgb", lambda: rgb.zones)
+            per_key = dev.per_key
+            if per_key:
+                attempt("keys", lambda: per_key.zones)
+            brightness = dev.brightness
+            if brightness:
+                attempt("brightness", brightness.get)
+            if isinstance(rgb, lighting.RGBEffects):
+                # This keyboard answers fn 5 with "invalid argument" in on-board
+                # mode, which is a normal state, not a fault.
+                attempt("sw_control", lambda: rgb.get_sw_control()[0])
+                attempt("onboard_effects", rgb.onboard_effect_names)
             if dev.has(F.PROFILE_MANAGEMENT):
                 from ..features.profile_fs import ProfileFS
 
-                try:
+                def stored():
                     fs = ProfileFS(dev.hidpp)
-                    data["stored_profiles"] = fs.profiles(0)
-                    data["stored_active"] = fs.active()[1]
-                except Exception as e:  # noqa: BLE001 - optional information
-                    log.info("could not read on-board profiles: %s", e)
-            data["info"] = dev.describe()
+                    return fs.profiles(0), fs.active()[1]
+
+                def read_stored():
+                    profiles, active = stored()
+                    data["stored_active"] = active
+                    return profiles
+
+                attempt("stored_profiles", read_stored)
+            attempt("info", dev.describe)
             return data
 
         run_async(read, self.loaded, self.fail)
@@ -222,7 +248,7 @@ class DevicePane(Gtk.Box):
         self.mode = data.get("mode", 0)
         self.dpi_values = data.get("dpi_values", [])
         self.hz_values = data.get("hz", [])
-        self.info = data["info"]
+        self.info = data.get("info", {})
         self.device_brightness = data.get("brightness")
         self.onboard_effects = data.get("onboard_effects", [])
         self.stored_profiles = data.get("stored_profiles", [])
