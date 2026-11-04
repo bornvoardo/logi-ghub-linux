@@ -47,7 +47,7 @@ def test_a_disabled_rule_file_does_nothing(tmp_path, monkeypatch):
 def test_adding_a_rule_for_a_missing_profile_is_refused(tmp_path, monkeypatch):
     _rules_file(tmp_path, monkeypatch)
     try:
-        cli.cmd_apps(Args(apps_cmd="add", match="firefox", profile="web", device_model="046d:c359", title=None))
+        cli.cmd_apps(Args(apps_cmd="add", match="firefox", profile="web", device_model="046d:c359", title=None, label=None))
     except SystemExit as e:
         assert "no profile" in str(e)
     else:
@@ -58,7 +58,7 @@ def test_a_rule_always_names_its_device(tmp_path, monkeypatch):
     """Rules are per device: each device's page makes its own."""
     path = _rules_file(tmp_path, monkeypatch)
     monkeypatch.setattr(cli.profiles, "list_profiles", lambda key: [type("P", (), {"name": "oyun"})()])
-    cli.cmd_apps(Args(apps_cmd="add", match="steam_app_*", profile="oyun", device_model="046d:c359", title=None))
+    cli.cmd_apps(Args(apps_cmd="add", match="steam_app_*", profile="oyun", device_model="046d:c359", title=None, label=None))
     saved = json.loads(path.read_text())
     assert saved["rules"][0]["match"] == "steam_app_*"
     assert saved["rules"][0]["device"] == "046d:c359"
@@ -67,8 +67,8 @@ def test_a_rule_always_names_its_device(tmp_path, monkeypatch):
 def test_two_devices_can_bind_the_same_window(tmp_path, monkeypatch):
     path = _rules_file(tmp_path, monkeypatch)
     monkeypatch.setattr(cli.profiles, "list_profiles", lambda key: [type("P", (), {"name": "oyun"})()])
-    cli.cmd_apps(Args(apps_cmd="add", match="steam_app_*", profile="oyun", device_model="046d:c359", title=None))
-    cli.cmd_apps(Args(apps_cmd="add", match="steam_app_*", profile="oyun", device_model="046d:409f", title=None))
+    cli.cmd_apps(Args(apps_cmd="add", match="steam_app_*", profile="oyun", device_model="046d:c359", title=None, label=None))
+    cli.cmd_apps(Args(apps_cmd="add", match="steam_app_*", profile="oyun", device_model="046d:409f", title=None, label=None))
     saved = json.loads(path.read_text())
     assert sorted(r["device"] for r in saved["rules"]) == ["046d:409f", "046d:c359"]
 

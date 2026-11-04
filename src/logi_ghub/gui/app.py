@@ -349,9 +349,14 @@ class DevicePane(Gtk.Box):
             g.add(Adw.ActionRow(title="Checked in order, first match wins",
                                 subtitle="Use the arrows to change which rule is tried first."))
         for position, rule in enumerate(mine, start=1):
-            row = Adw.ActionRow(title=GLib.markup_escape_text(rule.match),
-                                subtitle=GLib.markup_escape_text(f"{position}. → {rule.profile}"
-                                                                 + (f" · title has {rule.title!r}" if rule.title else "")),
+            shown = rule.display_name(rule.match)
+            detail = f"{position}. → {rule.profile}"
+            if rule.label:
+                detail += f" · class {rule.match}"
+            if rule.title:
+                detail += f" · title has {rule.title!r}"
+            row = Adw.ActionRow(title=GLib.markup_escape_text(shown),
+                                subtitle=GLib.markup_escape_text(detail),
                                 activatable=True)
 
             up = Gtk.Button(icon_name="go-up-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"],
@@ -440,14 +445,28 @@ class DevicePane(Gtk.Box):
             rows.append((row, app_id))
             group.add(row)
 
-        listbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroller.set_min_content_height(min(360, 60 * max(1, len(rows))))
         scroller.set_child(group)
-        listbox.append(scroller)
-        d.set_extra_child(listbox)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        # A long list of windows is the normal case, so it can be typed down.
+        # The filter matches the class and the title, case-insensitively.
+        search = Gtk.SearchEntry()
+        search.set_placeholder_text("Filter by class or title")
+        box.append(search)
+        box.append(scroller)
+        d.set_extra_child(box)
         d.add_response("cancel", "Cancel")
+
+        def apply_filter(_entry):
+            needle = search.get_text().strip().lower()
+            for row, app_id in rows:
+                haystack = (app_id + " " + (row.get_subtitle() or "")).lower()
+                row.set_visible(not needle or needle in haystack)
+
+        search.connect("search-changed", apply_filter)
 
         def chosen(row):
             app_id = dict((id(r), a) for r, a in rows).get(id(row))
@@ -460,6 +479,7 @@ class DevicePane(Gtk.Box):
 
         d.connect("response", lambda *_: None)
         d.present(self.win)
+        search.grab_focus()
 
     def _add_app_rule(self, names: list[str], rule=None):
         """Add a window binding, or edit ``rule`` when one is given."""
@@ -486,6 +506,14 @@ class DevicePane(Gtk.Box):
         pick_row.add_suffix(pick)
         pick_row.set_activatable_widget(pick)
         group.add(pick_row)
+
+        # What the notification and this list call the rule. Empty means the
+        # window class, which is precise but long.
+        name_row = Adw.EntryRow(title="Name (optional)")
+        name_row.set_tooltip_text("Shown in the notification and in this list. Leave empty to use the window class.")
+        if editing and rule.label:
+            name_row.set_text(rule.label)
+        group.add(name_row)
         box.append(group)
         # A ComboRow only expands inside a preferences group as well, so the profile
         # picker is a DropDown: it opens on a click anywhere on it.
@@ -512,6 +540,7 @@ class DevicePane(Gtk.Box):
             if not pattern:
                 self.toast("Give a window class")
                 return
+            label = name_row.get_text().strip() or None
             profile = names[picker.get_selected()]
             rules = appwatch.AppRules.load()
             if editing:
@@ -526,12 +555,12 @@ class DevicePane(Gtk.Box):
             else:
                 old_pos = None
             # Every rule belongs to the device whose page it was made on.
-            rules.add(pattern, profile, dev.key)
+            rules.add(pattern, profile, dev.key, label=label)
             if old_pos is not None:
                 rules.move_to(pattern, dev.key, old_pos)
             rules.save()
             self.build_profiles()
-            self.toast(f"{pattern} → {profile}")
+            self.toast(f"{label or pattern} → {profile}")
 
         d.connect("response", resp)
         d.present(self.win)
@@ -540,6 +569,8 @@ class DevicePane(Gtk.Box):
     def build_profiles(self):
         self.page_reset("profiles")
         dev = self.dev
+        from .. import appwatch
+
         if dev.onboard and self.slots:
             mode = {1: "on-board", 2: "host (software)"}.get(self.mode, "?")
             g = self.add_group("profiles", Adw.PreferencesGroup(
@@ -583,6 +614,11 @@ class DevicePane(Gtk.Box):
             running = prof.name == active
             row = Adw.ActionRow(title=GLib.markup_escape_text(prof.name), subtitle=summary)
             if running:
+                # Say why this one is running when a window rule put it there:
+                # the user did not press Use, so a bare check mark looks wrong.
+                by_app = appwatch.load_last_switch().get(dev.key)
+                if by_app:
+                    row.set_subtitle(GLib.markup_escape_text(f"running for {by_app} · {summary}"))
                 row.add_prefix(Gtk.Image.new_from_icon_name("object-select-symbolic"))
             if dev.hidpp is not None:  # host mode needs HID++ (not available on the G600)
                 # A switch read like "on/off", but a device runs exactly one profile:

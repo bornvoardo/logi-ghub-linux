@@ -91,6 +91,14 @@ class Rule:
     profile: str
     device: str | None = None
     title: str | None = None
+    # A name to show instead of the window class. The class is long and cryptic
+    # ("org.kde.konsole", "steam_app_5335510"), so a rule can carry its own label
+    # for the notification and the app. Empty means "use the window class".
+    label: str | None = None
+
+    def display_name(self, app_id: str) -> str:
+        """What the notification and the app call this rule."""
+        return (self.label or "").strip() or app_id
 
     def matches(self, app_id: str, caption: str) -> bool:
         if not fnmatch.fnmatchcase(app_id.lower(), self.match.lower()):
@@ -124,6 +132,7 @@ class AppRules:
                     profile=str(entry["profile"]),
                     device=(str(entry["device"]) if entry.get("device") else None),
                     title=(str(entry["title"]) if entry.get("title") else None),
+                    label=(str(entry["label"]) if entry.get("label") else None),
                 ))
             except (KeyError, TypeError):
                 log.warning("skipping a malformed rule: %r", entry)
@@ -140,12 +149,19 @@ class AppRules:
     # -- decisions -------------------------------------------------------------
     def profile_for(self, device: str, app_id: str, caption: str) -> str | None:
         """The profile this window should give ``device``, or None to leave it alone."""
+        rule = self.rule_for(device, app_id, caption)
+        if rule is not None:
+            return rule.profile
+        return self.defaults.get(device)
+
+    def rule_for(self, device: str, app_id: str, caption: str) -> "Rule | None":
+        """The rule that answers for this window, so its label can be shown."""
         for rule in self.rules:
             if rule.device not in (None, device):
                 continue
             if rule.matches(app_id, caption):
-                return rule.profile
-        return self.defaults.get(device)
+                return rule
+        return None
 
     def devices(self) -> set[str]:
         out = set(self.defaults)
@@ -153,14 +169,15 @@ class AppRules:
         return out
 
     # -- editing ---------------------------------------------------------------
-    def add(self, match: str, profile: str, device: str | None = None, title: str | None = None) -> Rule:
+    def add(self, match: str, profile: str, device: str | None = None, title: str | None = None,
+            label: str | None = None) -> Rule:
         """Add a rule, or replace one with the same pattern in the same place.
 
         Rules are matched in order and the first match wins, so re-adding an
         existing pattern must not move it to the end: that silently changed which
         rule applied.
         """
-        rule = Rule(match, profile, device, title)
+        rule = Rule(match, profile, device, title, label)
         out = []
         replaced = False
         for existing in self.rules:
@@ -267,6 +284,37 @@ def load_windows() -> list[dict]:
         return []
     windows = data.get("windows")
     return windows if isinstance(windows, list) else []
+
+
+def state_path() -> Path:
+    from .config import config_dir
+
+    return config_dir() / "app-state.json"
+
+
+def save_last_switch(labels: dict[str, str]) -> None:
+    """Record which rule label moved each device, for the app to display.
+
+    The app cannot know on its own: a window change happens in the daemon, and on
+    Wayland the app cannot read the focused window. One small file, written only
+    when a switch actually happened, is cheaper than polling KWin.
+    """
+    try:
+        path = state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"by_app": labels}, indent=2) + "\n")
+    except OSError as e:
+        log.info("could not save the application state: %s", e)
+
+
+def load_last_switch() -> dict[str, str]:
+    """Which rule moved each device, or an empty map."""
+    try:
+        data = json.loads(state_path().read_text())
+    except (OSError, ValueError):
+        return {}
+    by_app = data.get("by_app")
+    return by_app if isinstance(by_app, dict) else {}
 
 
 # -- app identity --------------------------------------------------------------
@@ -532,8 +580,10 @@ class Watcher:
         if not targets:
             return
         wanted: dict[str, str] = {}
+        labels: dict[str, str] = {}
         for device in targets:
-            name = self.rules.profile_for(device, app_id, caption)
+            rule = self.rules.rule_for(device, app_id, caption)
+            name = rule.profile if rule is not None else self.rules.defaults.get(device)
             if name is None or active.get(device) == name:
                 continue
             if not profile_exists(device, name):
@@ -543,10 +593,14 @@ class Watcher:
                             app_id, name, device)
                 continue
             wanted[device] = name
+            # The rule's own name, or the window class when it has none.
+            labels[device] = rule.display_name(app_id) if rule is not None else app_id
         if not wanted:
             return
         for device, name in wanted.items():
             profiles.set_active(device, name)
+        # Remembered so the app can show what is running without asking KWin again.
+        save_last_switch(labels)
         log.info("window %r: switched %s", app_id,
                  ", ".join(f"{d} -> {p}" for d, p in sorted(wanted.items())))
 

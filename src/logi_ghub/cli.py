@@ -398,10 +398,14 @@ def cmd_apps(args) -> None:
         if rules.rules:
             print("\nwindow rules:")
             for r in rules.rules:
-                bits = [f"[{r.device or '?'}]", f"{r.match:<24}", f"-> {r.profile}"]
+                shown = r.display_name(r.match)
+                head = f"  [{r.device or '?'}] {shown}"
+                if r.label:
+                    head += f"   (class {r.match})"
+                bits = [head, f"-> {r.profile}"]
                 if r.title:
                     bits.append(f"(title contains {r.title!r})")
-                print("  " + " ".join(bits))
+                print(" ".join(bits))
         else:
             print("\nno window rules")
         return
@@ -410,9 +414,11 @@ def cmd_apps(args) -> None:
         if not any(p.name == args.profile for p in profiles.list_profiles(key)):
             raise SystemExit(f"no profile {args.profile!r} for {key}; create it first "
                              f"(logi-ghub-cli -d {key} profile keys {args.profile} ...)")
-        rule = rules.add(args.match, args.profile, key, args.title)
+        rule = rules.add(args.match, args.profile, key, args.title, args.label)
         print(f"saved {rules.save()}")
-        print(f"  [{rule.device}] {rule.match} -> {rule.profile}")
+        shown = rule.display_name(args.match)
+        print(f"  [{rule.device}] {shown} -> {rule.profile}"
+              + (f"   (window class {rule.match})" if rule.label else ""))
         print("the daemon picks up the rules file within a second; no restart needed")
         return
     if sub == "remove":
@@ -623,6 +629,7 @@ def main(argv: list[str] | None = None) -> int:
                    help="the device this rule belongs to, e.g. 046d:c359")
     q.add_argument("--profile", required=True, help="profile to run")
     q.add_argument("--title", help="also require this text in the window title")
+    q.add_argument("--label", help="a name to show instead of the window class (notification and app)")
     q = asp.add_parser("remove", help="drop a rule")
     q.add_argument("match")
     q.add_argument("--device", dest="device_model", help="the rule's device, if it had one")
