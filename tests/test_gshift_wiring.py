@@ -55,7 +55,7 @@ def test_the_daemon_records_the_layer_on_the_session():
     """The mouse half reads session.gshift, so it must be kept up to date."""
     src = _daemon_source()
     body = src[src.index("def on_gshift"):src.index("def _keys_problem")]
-    assert "self.gshift = on" in body
+    assert "self.gshift_state.set(on)" in body
 
 
 def test_the_layer_change_is_queued_not_applied_inline():

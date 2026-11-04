@@ -124,18 +124,54 @@ class MacroRunner:
                 stop.set()
 
 
+class GShift:
+    """The G-Shift layer, shared by every device.
+
+    Its whole purpose is that a key held on one device changes the other: pressing
+    the keyboard's trigger must change the mouse's buttons. So the flag cannot live
+    on a session. The keyboard reader and the mouse listener are separate threads,
+    hence the lock.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._open = False
+        self._listeners: list = []
+
+    @property
+    def open(self) -> bool:
+        with self._lock:
+            return self._open
+
+    def set(self, on: bool) -> bool:
+        """Open or close the layer. Returns whether it actually changed."""
+        with self._lock:
+            if on == self._open:
+                return False
+            self._open = on
+            listeners = list(self._listeners)
+        for fn in listeners:
+            fn(on)
+        return True
+
+    def listen(self, fn) -> None:
+        with self._lock:
+            self._listeners.append(fn)
+
+
 class Session:
     """A device running a host profile."""
 
     def __init__(self, dev: LogiDevice, profile: profiles.Profile, events: queue.Queue, runner: MacroRunner,
-                 vinput: VirtualInput | None):
+                 vinput: VirtualInput | None, gshift: "GShift | None" = None):
         self.dev = dev
         self.profile = profile
         self.events = events
         self.runner = runner
         self.vinput = vinput
         self.buttons_down = 0
-        self.gshift = False
+        # Shared with every other device, so one trigger moves the whole desk.
+        self.gshift_state = gshift or GShift()
         self.dpi_index = profile.default_dpi
         self.held_codes: dict[int, list[int]] = {}
         self.pressed: dict[int, Action] = {}  # action used at press time, so release matches it
@@ -210,10 +246,12 @@ class Session:
     def on_gshift(self, on: bool) -> None:
         """The keyboard's G-Shift key opened or closed its second layer.
 
-        Called on the key reader thread, so it only records and queues: touching
-        the device or the events queue from here would block typing.
+        The layer belongs to the machine, not to this session: every device has to
+        follow, so the flag is set on the shared object and each session redraws
+        its own remapping. Called on the key reader thread, so nothing here waits
+        on a device.
         """
-        self.gshift = on
+        self.gshift_state.set(on)
         self.events.put(("gshift", self, on))
 
     def _keys_problem(self, msg: str, *args) -> None:
@@ -285,6 +323,35 @@ class Session:
         self.held_codes.clear()
 
     # -- button handling --------------------------------------------------------
+    # -- the shared layer -------------------------------------------------------
+    @property
+    def gshift(self) -> bool:
+        """Whether the second layer is open, wherever the trigger was pressed."""
+        return self.gshift_state.open
+
+    @gshift.setter
+    def gshift(self, on: bool) -> None:
+        self.set_gshift(on)
+
+    def set_gshift(self, on: bool) -> None:
+        """Open or close the shared layer, and make this device follow it."""
+        if self.gshift_state.set(on):
+            self.apply_remapping()
+
+    def apply_remapping(self) -> None:
+        """Tell the device which buttons it now answers itself.
+
+        Called when the layer changes: a button that went from a plain click to a
+        keystroke must stop being sent by the device, and one that went the other
+        way must start.
+        """
+        if self.spy is None:
+            return
+        try:
+            self.spy.set_remapping(self._remap_table())
+        except (HIDPPError, DeviceOffline, TimeoutError, OSError) as e:
+            log.info("%s: could not update the button remapping: %s", self.dev.name, e)
+
     def action_for(self, index: int) -> Action:
         layer = self.profile.gshift_buttons if self.gshift else self.profile.buttons
         a = layer.get(index)
@@ -414,6 +481,9 @@ class Daemon:
         self.fake = fake
         self.events: queue.Queue = queue.Queue()
         self.sessions: dict[str, Session] = {}
+        # One layer for the machine: a key held on the keyboard must change the
+        # mouse's buttons too.
+        self.gshift = GShift()
         self.stop = threading.Event()
         try:
             self.vinput = VirtualInput()
@@ -428,6 +498,14 @@ class Daemon:
         # rules in app-profiles.json decide which profile each device should run.
         # Off unless the rules file exists, so a plain install behaves as before.
         self.watcher = None
+        # A layer change has to reach every device, not only the one that was
+        # triggered: this runs on whichever thread held the trigger.
+        self.gshift.listen(self._layer_changed)
+
+    def _layer_changed(self, on: bool) -> None:
+        """Every running profile redraws its button remapping for the new layer."""
+        for session in list(self.sessions.values()):
+            session.apply_remapping()
 
     def _devices(self) -> list[LogiDevice]:
         if self.fake:
@@ -463,7 +541,7 @@ class Daemon:
             try:
                 profile = profiles.load_profile(dev.key, name)
                 dev.hidpp.swid = DAEMON_SW_ID
-                session = Session(dev, profile, self.events, self.runner, self.vinput)
+                session = Session(dev, profile, self.events, self.runner, self.vinput, gshift=self.gshift)
                 session.profile_mtime = _profile_mtime(dev.key, name)
                 dev.hidpp.add_handler(lambda m, s=session: self.events.put(("msg", s, m)))
                 dev.hidpp.start_listener()
