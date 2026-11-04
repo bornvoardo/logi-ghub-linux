@@ -348,10 +348,12 @@ class DevicePane(Gtk.Box):
         for rule in mine:
             row = Adw.ActionRow(title=GLib.markup_escape_text(rule.match),
                                 subtitle=GLib.markup_escape_text(rule.profile
-                                                                 + (f" · title has {rule.title!r}" if rule.title else "")))
+                                                                 + (f" · title has {rule.title!r}" if rule.title else "")),
+                                activatable=True)
             rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"])
             rm.connect("clicked", lambda _b, m=rule.match, d=rule.device: self._remove_app_rule(m, d))
             row.add_suffix(rm)
+            row.connect("activated", lambda _r, ru=rule: self._add_app_rule(names, ru))
             g.add(row)
 
         add = Gtk.Button(label="Add application", valign=Gtk.Align.CENTER)
@@ -386,17 +388,22 @@ class DevicePane(Gtk.Box):
         rules.save()
         self.build_profiles()
 
-    def _add_app_rule(self, names: list[str]):
+    def _add_app_rule(self, names: list[str], rule=None):
+        """Add a window binding, or edit ``rule`` when one is given."""
         from .. import appwatch
 
         dev = self.dev
-        d = Adw.AlertDialog(heading="Add an application",
-                            body="The window class KWin reports, a wildcard is allowed (steam_app_*, firefox).")
+        editing = rule is not None
+        d = Adw.AlertDialog(
+            heading="Edit application" if editing else "Add an application",
+            body="The window class KWin reports, a wildcard is allowed (steam_app_*, firefox).")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         # An Adw.EntryRow needs a preferences group around it; inside a plain box
         # the entry has no frame and looks like empty space.
         group = Adw.PreferencesGroup()
         match = Adw.EntryRow(title="Window class")
+        if editing:
+            match.set_text(rule.match)
         group.add(match)
         box.append(group)
         # A ComboRow only expands inside a preferences group as well, so the profile
@@ -404,6 +411,8 @@ class DevicePane(Gtk.Box):
         picker_row = Adw.ActionRow(title="Profile")
         picker = Gtk.DropDown.new_from_strings(names)
         picker.set_valign(Gtk.Align.CENTER)
+        if editing and rule.profile in names:
+            picker.set_selected(names.index(rule.profile))
         picker_row.add_suffix(picker)
         picker_row.set_activatable_widget(picker)
         group2 = Adw.PreferencesGroup()
@@ -411,7 +420,7 @@ class DevicePane(Gtk.Box):
         box.append(group2)
         d.set_extra_child(box)
         d.add_response("cancel", "Cancel")
-        d.add_response("add", "Add")
+        d.add_response("add", "Save" if editing else "Add")
         d.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
         d.set_default_response("add")
 
@@ -424,6 +433,10 @@ class DevicePane(Gtk.Box):
                 return
             profile = names[picker.get_selected()]
             rules = appwatch.AppRules.load()
+            if editing:
+                # The pattern itself can change, so drop the old one first.
+                assert rule is not None
+                rules.remove(rule.match, rule.device)
             # Every rule belongs to the device whose page it was made on.
             rules.add(pattern, profile, dev.key)
             rules.save()

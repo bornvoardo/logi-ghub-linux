@@ -408,6 +408,7 @@ class Daemon:
         self.runner = MacroRunner(self.vinput)
         self._active_mtime = 0
         self._last_scan = 0.0
+        self._toast_id = 0
         # Application profiles: a KWin script reports the focused window, and the
         # rules in app-profiles.json decide which profile each device should run.
         # Off unless the rules file exists, so a plain install behaves as before.
@@ -425,6 +426,8 @@ class Daemon:
         # Drop sessions whose profile was deactivated or changed.
         for key, s in list(self.sessions.items()):
             if active.get(key) != s.profile.name or s.profile_mtime != _profile_mtime(key, s.profile.name):
+                if active.get(key) not in (None, s.profile.name):
+                    self._announce(active[key])
                 self.end(key)
         for s in self.sessions.values():
             s.ensure_keys()
@@ -514,6 +517,17 @@ class Daemon:
                 log.warning("%s: lost (%s)", s.dev.name, e)
                 self.sessions.pop(s.dev.key, None)
         self.shutdown()
+
+    def _announce(self, profile_name: str) -> None:
+        """Say which profile is now running, in one short line.
+
+        The notification is not replaced afterwards: the freedesktop service returns
+        the id it assigned, and that id is what a later message would have to reuse.
+        A short timeout keeps a run of window switches from stacking up.
+        """
+        from .notify import notify
+
+        notify(profile_name)
 
     def start_app_watch(self) -> None:
         """Turn on application profiles when a rules file exists."""
