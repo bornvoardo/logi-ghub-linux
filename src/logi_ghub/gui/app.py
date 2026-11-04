@@ -619,31 +619,6 @@ class DevicePane(Gtk.Box):
         dev = self.dev
         from .. import appwatch
 
-        if dev.onboard and self.slots:
-            mode = {1: "on-board", 2: "host (software)"}.get(self.mode, "?")
-            g = self.add_group("profiles", Adw.PreferencesGroup(
-                title="On-board memory",
-                description=f"Profiles stored in the {dev.kind}; they work on any computer without this app. Current mode: {mode}."))
-            for p in self.slots:
-                editing = self.target == ("slot", p.sector)
-                hz = 1000 // max(1, p.report_rate_ms)
-                row = Adw.ActionRow(title=GLib.markup_escape_text(p.display_name),
-                                    subtitle=f"Slot {p.sector} · {'/'.join(map(str, p.active_dpis))} DPI · {hz} Hz"
-                                    + (" · active" if p.sector == self.active_slot else "")
-                                    + ("" if p.enabled else " · disabled"))
-                if p.sector == self.active_slot:
-                    row.add_prefix(Gtk.Image.new_from_icon_name("emblem-ok-symbolic"))
-                if editing:
-                    row.add_css_class("accent")
-                if p.sector != self.active_slot and p.enabled:
-                    b = Gtk.Button(label="Activate", valign=Gtk.Align.CENTER)
-                    b.connect("clicked", lambda _b, s=p.sector: self.activate_slot(s))
-                    row.add_suffix(b)
-                e = Gtk.Button(label="Editing" if editing else "Edit", valign=Gtk.Align.CENTER, sensitive=not editing)
-                e.connect("clicked", lambda _b, s=p.sector: self.switch_target(lambda: self.edit_slot(s)))
-                row.add_suffix(e)
-                g.add(row)
-
         g = self.add_group("profiles", Adw.PreferencesGroup(
             title="Profiles on this computer",
             description="A profile is a set of assignments stored here. One profile runs on a device at a time: "
@@ -699,6 +674,33 @@ class DevicePane(Gtk.Box):
 
         if dev.hidpp is not None:
             self.build_app_rules()
+
+        # On-board memory comes last: it is the device's own memory, not this
+        # app's profiles, and it is the section a user reaches for least often.
+        if dev.onboard and self.slots:
+            mode = {1: "on-board", 2: "host (software)"}.get(self.mode, "?")
+            g = self.add_group("profiles", Adw.PreferencesGroup(
+                title="On-board memory",
+                description=f"Profiles stored in the {dev.kind}; they work on any computer without this app. Current mode: {mode}."))
+            for p in self.slots:
+                editing = self.target == ("slot", p.sector)
+                hz = 1000 // max(1, p.report_rate_ms)
+                row = Adw.ActionRow(title=GLib.markup_escape_text(p.display_name),
+                                    subtitle=f"Slot {p.sector} · {'/'.join(map(str, p.active_dpis))} DPI · {hz} Hz"
+                                    + (" · active" if p.sector == self.active_slot else "")
+                                    + ("" if p.enabled else " · disabled"))
+                if p.sector == self.active_slot:
+                    row.add_prefix(Gtk.Image.new_from_icon_name("emblem-ok-symbolic"))
+                if editing:
+                    row.add_css_class("accent")
+                if p.sector != self.active_slot and p.enabled:
+                    b = Gtk.Button(label="Activate", valign=Gtk.Align.CENTER)
+                    b.connect("clicked", lambda _b, s=p.sector: self.activate_slot(s))
+                    row.add_suffix(b)
+                e = Gtk.Button(label="Editing" if editing else "Edit", valign=Gtk.Align.CENTER, sensitive=not editing)
+                e.connect("clicked", lambda _b, s=p.sector: self.switch_target(lambda: self.edit_slot(s)))
+                row.add_suffix(e)
+                g.add(row)
 
         if dev.onboard:
             g = self.add_group("profiles", Adw.PreferencesGroup(
